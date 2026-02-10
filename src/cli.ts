@@ -250,6 +250,7 @@ md-specific flags (consumed, not passed to command):
   --_context        Show context tree and exit (no execution)
   --_quiet          Skip context dashboard display before execution
   --_no-menu        Disable post-run action menu (for scripting/piping)
+  --json            Emit a single JSON result object and disable interactive UI
 
 Without arguments:
   md              Interactive agent picker (from ./.mdflow/, ~/.mdflow/, etc.)

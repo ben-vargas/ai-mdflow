@@ -133,7 +133,6 @@ interface JsonModePayload {
   args: string[];
   stdout: string;
   stderr: string;
-  logPath: string;
 }
 
 interface JsonModeState {
@@ -329,7 +328,6 @@ export class CliRunner {
 
   private buildJsonModePayload(
     result: CliRunResult,
-    logPath: string | null,
     capturedStdout: string[],
     capturedStderr: string[]
   ): JsonModePayload {
@@ -352,7 +350,6 @@ export class CliRunner {
       args: state?.args ?? [],
       stdout,
       stderr,
-      logPath: result.logPath ?? logPath ?? "",
     };
   }
 
@@ -475,8 +472,8 @@ export class CliRunner {
       console.error = originalError;
     }
 
-    const payload = this.buildJsonModePayload(result, logPath, capturedStdout, capturedStderr);
-    originalLog(JSON.stringify(payload));
+    const payload = this.buildJsonModePayload(result, capturedStdout, capturedStderr);
+    process.stdout.write(`${JSON.stringify(payload)}\n`);
     this.jsonModeState = null;
     return result;
   }
