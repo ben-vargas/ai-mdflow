@@ -14,9 +14,27 @@ export interface IOStreams {
 
 /**
  * Frontmatter keys for underscore-prefixed system/template fields.
- * Examples: `_inputs`, `_env`, `_steps`, `_name`, `_target`.
+ * Examples: `_inputs`, `_env`, `_output`, `_steps`, `_name`, `_target`.
  */
-export type FrontmatterSystemKey = `_${string}`;
+export type ReservedFrontmatterSystemKey =
+  | "_inputs"
+  | "_env"
+  | "_output"
+  | "_interactive"
+  | "_i"
+  | "_cwd"
+  | "_subcommand"
+  | "_dry-run"
+  | "_edit"
+  | "_trust"
+  | "_no-cache"
+  | "_no-menu"
+  | "_command"
+  | "_c"
+  | "_steps"
+  | "_workflow";
+
+export type FrontmatterSystemKey = ReservedFrontmatterSystemKey | `_${string}`;
 
 /**
  * Frontmatter keys for positional argument mappings.
@@ -112,6 +130,20 @@ export type InputDefinition =
  */
 export type FormInputs = Record<FrontmatterSystemKey, InputDefinition>;
 
+/**
+ * Structured output behavior for post-command processing.
+ */
+export interface StructuredOutputConfig {
+  /** Expected output format for extraction */
+  format?: "json" | "text" | "patch";
+  /** Optional schema ref in `<path>#<ExportName>` format */
+  schema?: string;
+  /** Optional path to save extracted output */
+  save?: string;
+  /** Whether to apply extracted output as a patch via git apply */
+  apply?: boolean;
+}
+
 /** Frontmatter configuration - keys become CLI flags */
 export interface AgentFrontmatter {
   /**
@@ -127,6 +159,12 @@ export interface AgentFrontmatter {
    * Uses underscore prefix to avoid namespace collision with CLI --env flags.
    */
   _env?: Record<string, string>;
+
+  /**
+   * Structured output processing config.
+   * Runs extraction -> optional schema validation -> sink actions.
+   */
+  _output?: StructuredOutputConfig;
 
   /**
    * Multi-step workflow definition.
@@ -155,7 +193,7 @@ export interface AgentFrontmatter {
    * Underscore-prefixed keys are template variables, not passed to CLI.
    * Available in body as {{ _varname }}, can be overridden via --_varname CLI flag.
    * Example: _name: "default" → {{ _name }} in body → --_name "override"
-   * Note: Also includes system keys like _inputs (string[]) and _env (Record<string, string>)
+   * Note: Also includes system keys like _inputs, _env, _output, and _steps.
    */
   [key: FrontmatterSystemKey]: FrontmatterValue;
 

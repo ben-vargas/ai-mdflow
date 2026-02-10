@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { CliRunner, createCliRunner } from "./cli-runner";
 import { createTestEnvironment, InMemorySystemEnvironment } from "./system-environment";
 import { clearConfigCache } from "./config";
@@ -386,6 +389,42 @@ Test default`);
 
       const result = await runner.run(["node", "md", "/test/default.echo.md", "--_dry-run"]);
       expect(result.exitCode).toBe(0);
+    });
+  });
+
+  describe("structured output", () => {
+    it("saves extracted json when _output is configured and menu is disabled", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "mdflow-structured-output-"));
+      const outputFile = join(tempDir, "result.json");
+
+      try {
+        env.addFile("/test/structured-output.echo.md", `---
+_output:
+  format: json
+  save: result.json
+---
+{"status":"ok","count":1}`);
+
+        const runner = new CliRunner({
+          env,
+          isStdinTTY: true,
+          isStdoutTTY: true,
+          cwd: tempDir,
+        });
+
+        const result = await runner.run([
+          "node",
+          "md",
+          "/test/structured-output.echo.md",
+          "--_no-menu",
+        ]);
+
+        expect(result.exitCode).toBe(0);
+        const saved = JSON.parse(readFileSync(outputFile, "utf-8"));
+        expect(saved).toEqual({ status: "ok", count: 1 });
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
     });
   });
 });

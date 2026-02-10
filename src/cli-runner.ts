@@ -8,7 +8,7 @@
 
 import { parseFrontmatter } from "./parse";
 import { parseCliArgs, handleMaCommands } from "./cli";
-import type { AgentFrontmatter, FormInputs } from "./types";
+import type { AgentFrontmatter, FormInputs, StructuredOutputConfig } from "./types";
 import { detectAdhocCommand, createVirtualAgentContent, createVirtualFilename } from "./adhoc-command";
 import {
   isFormInputs,
@@ -93,6 +93,30 @@ async function getSaveVariableValuesFn() {
     _saveVariableValues = mod.saveVariableValues;
   }
   return _saveVariableValues;
+}
+
+type StructuredOutputFormat = NonNullable<StructuredOutputConfig["format"]>;
+
+interface OutputModule {
+  extractStructured: (stdout: string, format?: StructuredOutputFormat) => unknown;
+  validateOutput?: (
+    schemaRef: string,
+    value: unknown,
+    options?: { baseDir?: string }
+  ) => Promise<unknown>;
+  validate?: (
+    schemaRef: string,
+    value: unknown,
+    options?: { baseDir?: string }
+  ) => Promise<unknown>;
+  sinkOutput?: (...args: unknown[]) => Promise<unknown> | unknown;
+  sinkSave?: (
+    targetPath: string,
+    value: unknown,
+    format: StructuredOutputFormat,
+    options?: { cwd?: string }
+  ) => Promise<string>;
+  sinkApplyPatch?: (patchText: string, options?: { cwd?: string }) => void;
 }
 
 /** Result from CliRunner.run() */
@@ -398,7 +422,10 @@ export class CliRunner {
     // Determine if we should capture output for post-run menu
     // Disable when piping (stdout not TTY) to support: foo.md | bar.md
     const shouldShowMenu = this.isStdinTTY && this.isStdoutTTY && !parsed.noMenu;
-    const captureMode = shouldShowMenu ? "tee" as const : false;
+    const structuredOutputConfig = this.getStructuredOutputConfig(frontmatter);
+    const captureMode = shouldShowMenu
+      ? "tee" as const
+      : (structuredOutputConfig ? "capture" as const : false);
 
     const runResult = await runCommand({
       command,
@@ -414,6 +441,17 @@ export class CliRunner {
 
     if (runResult.exitCode !== 0) {
       this.printErrorWithLogPath(`Agent exited with code ${runResult.exitCode}`, logPath);
+    }
+
+    if (runResult.exitCode === 0 && structuredOutputConfig) {
+      const structuredOutputCwd = parsed.cwdFromCli ?? (frontmatter._cwd as string | undefined) ?? this.cwd;
+      await this.processStructuredOutput({
+        stdout: runResult.stdout,
+        output: structuredOutputConfig,
+        baseDir: this.cwd,
+        sinkCwd: structuredOutputCwd,
+        source: virtualFilename,
+      });
     }
 
     // Show post-run action menu if enabled and we have output
@@ -636,8 +674,11 @@ export class CliRunner {
     // Only capture when: TTY (stdin+stdout), not piped, menu not disabled
     // Checking stdout.isTTY enables piping: foo.md | bar.md
     const shouldShowMenu = this.isStdinTTY && this.isStdoutTTY && !parsed.noMenu;
+    const structuredOutputConfig = this.getStructuredOutputConfig(frontmatter);
     // Always capture stderr when in interactive mode for failure menu
-    const captureMode = shouldShowMenu ? "tee" as const : false;
+    const captureMode = shouldShowMenu
+      ? "tee" as const
+      : (structuredOutputConfig ? "capture" as const : false);
 
     // Auto-heal retry loop
     let currentPrompt = promptToRun;
@@ -706,6 +747,17 @@ export class CliRunner {
 
     // Record usage for frecency tracking (skip for failed runs, lazy-load history)
     if (runResult.exitCode === 0) {
+      if (structuredOutputConfig) {
+        const structuredOutputCwd = parsed.cwdFromCli ?? (frontmatter._cwd as string | undefined) ?? this.cwd;
+        await this.processStructuredOutput({
+          stdout: runResult.stdout,
+          output: structuredOutputConfig,
+          baseDir: dirname(resolve(localFilePath)),
+          sinkCwd: structuredOutputCwd,
+          source: localFilePath,
+        });
+      }
+
       getRecordUsage().then(recordUsage => recordUsage(localFilePath)).catch(() => {}); // Fire and forget
 
       // Save prompted variable values to history for future runs (fire and forget)
@@ -741,6 +793,146 @@ export class CliRunner {
 
     logger.info({ exitCode: runResult.exitCode, retryCount }, "Session ended");
     return { exitCode: runResult.exitCode, logPath };
+  }
+
+  private getStructuredOutputConfig(frontmatter: AgentFrontmatter): StructuredOutputConfig | undefined {
+    if (!Object.prototype.hasOwnProperty.call(frontmatter, "_output")) {
+      return undefined;
+    }
+
+    const output = frontmatter._output;
+    if (output === undefined || output === null) {
+      return undefined;
+    }
+
+    if (typeof output !== "object" || Array.isArray(output)) {
+      throw new ConfigurationError("_output must be a mapping/object when provided", 1);
+    }
+
+    return output;
+  }
+
+  private resolveStructuredOutputFormat(output: StructuredOutputConfig): StructuredOutputFormat {
+    return output.format ?? (output.apply ? "patch" : "text");
+  }
+
+  private unwrapValidationResult(result: unknown): unknown {
+    if (!result || typeof result !== "object" || !("success" in result)) {
+      return result;
+    }
+
+    const validationResult = result as {
+      success?: unknown;
+      data?: unknown;
+      error?: unknown;
+    };
+
+    if (validationResult.success === true) {
+      return validationResult.data;
+    }
+
+    if (validationResult.success === false) {
+      const message = typeof validationResult.error === "string"
+        ? validationResult.error
+        : "Schema validation failed.";
+      throw new Error(message);
+    }
+
+    return result;
+  }
+
+  private serializeStructuredForSink(value: unknown, format: StructuredOutputFormat): string {
+    if (typeof value === "string") {
+      return value;
+    }
+
+    if (format === "json") {
+      return `${JSON.stringify(value, null, 2)}\n`;
+    }
+
+    return JSON.stringify(value);
+  }
+
+  private async processStructuredOutput(params: {
+    stdout: string;
+    output: StructuredOutputConfig;
+    baseDir: string;
+    sinkCwd: string;
+    source: string;
+  }): Promise<void> {
+    const { stdout, output, baseDir, sinkCwd, source } = params;
+    const format = this.resolveStructuredOutputFormat(output);
+
+    try {
+      getCommandLogger().info(
+        {
+          source,
+          format,
+          hasSchema: Boolean(output.schema),
+          save: output.save ?? null,
+          apply: Boolean(output.apply),
+          sinkCwd,
+        },
+        "Processing structured output"
+      );
+
+      const outputModule = await import("./output") as OutputModule;
+      let structured = outputModule.extractStructured(stdout, format);
+
+      if (output.schema) {
+        if (outputModule.validateOutput) {
+          const validationResult = await outputModule.validateOutput(output.schema, structured, { baseDir });
+          structured = this.unwrapValidationResult(validationResult);
+        } else if (outputModule.validate) {
+          structured = await outputModule.validate(output.schema, structured, { baseDir });
+        } else {
+          throw new Error("validateOutput() is unavailable in src/output.ts");
+        }
+      }
+
+      if (output.save || output.apply) {
+        if (outputModule.sinkOutput) {
+          if (outputModule.sinkOutput.length >= 3) {
+            await outputModule.sinkOutput(structured, output, { cwd: sinkCwd, format });
+          } else {
+            const sinkContent = this.serializeStructuredForSink(structured, format);
+            await outputModule.sinkOutput(
+              { save: output.save, apply: output.apply, cwd: sinkCwd },
+              sinkContent
+            );
+          }
+        } else {
+          if (output.save) {
+            if (!outputModule.sinkSave) {
+              throw new Error("sinkOutput() and sinkSave() are unavailable in src/output.ts");
+            }
+            await outputModule.sinkSave(output.save, structured, format, { cwd: sinkCwd });
+          }
+
+          if (output.apply) {
+            if (format !== "patch") {
+              throw new Error("Output apply=true requires format=patch.");
+            }
+            if (typeof structured !== "string") {
+              throw new Error("Patch output must be string data.");
+            }
+            if (!outputModule.sinkApplyPatch) {
+              throw new Error("sinkOutput() and sinkApplyPatch() are unavailable in src/output.ts");
+            }
+            outputModule.sinkApplyPatch(structured, { cwd: sinkCwd });
+          }
+        }
+      }
+
+      getCommandLogger().info({ source, format }, "Structured output processed");
+    } catch (err) {
+      const details = err instanceof Error ? err.message : String(err);
+      getCommandLogger().error(
+        { source, format, error: details, outputConfig: output },
+        "Structured output processing failed"
+      );
+      throw new ConfigurationError(`Structured output processing failed: ${details}`, 1);
+    }
   }
 
   private parseFlags(passthroughArgs: string[]) {
@@ -833,7 +1025,7 @@ export class CliRunner {
 
     // Extract _varname fields from frontmatter and match with --_varname CLI flags
     // Variables starting with _ are template variables (except internal keys)
-    const internalKeys = new Set(["_interactive", "_i", "_cwd", "_subcommand", "_steps"]);
+    const internalKeys = new Set(["_interactive", "_i", "_cwd", "_subcommand", "_steps", "_output"]);
     const namedVarFields = Object.keys(frontmatter).filter((k) => k.startsWith("_") && !internalKeys.has(k));
     for (const key of namedVarFields) {
       const defaultValue = frontmatter[key];
