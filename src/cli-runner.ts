@@ -23,6 +23,7 @@ import {
   resolveCommand, buildArgs, runCommand, extractPositionalMappings,
   extractEnvVars, killCurrentChildProcess, hasInteractiveMarker,
 } from "./command";
+import { parseWorkflow, executeWorkflow, type WorkflowResult } from "./workflow";
 import { startSpinner } from "./spinner";
 import { getProcessManager } from "./process-manager";
 import {
@@ -510,6 +511,97 @@ export class CliRunner {
       printDashboard(analysis);
     }
 
+    const workflowSteps = frontmatter._steps;
+    if (workflowSteps !== undefined) {
+      const workflow = parseWorkflow(workflowSteps);
+
+      let workflowRunArgs = args;
+      if (frontmatter._subcommand) {
+        const subcommands = Array.isArray(frontmatter._subcommand)
+          ? frontmatter._subcommand
+          : [frontmatter._subcommand];
+        workflowRunArgs = [...subcommands, ...args];
+      }
+
+      const workflowTemplateVars = Object.fromEntries(
+        Object.entries(templateVars).filter(([key]) => !key.startsWith("__"))
+      );
+
+      if (parsed.dryRun) {
+        return this.handleWorkflowDryRun(
+          command,
+          workflowRunArgs,
+          workflow,
+          logger,
+          isRemote,
+          localFilePath
+        );
+      }
+
+      if (isRemote && !parsed.trustFlag) {
+        await this.handleTOFU(filePath, localFilePath, command, baseFrontmatter, rawBody);
+      }
+
+      const shouldShowMenu = this.isStdinTTY && this.isStdoutTTY && !parsed.noMenu;
+      const captureMode = this.isStdoutTTY ? "tee" as const : "capture" as const;
+      const cacheBaseDir = parsed.cwdFromCli ?? (frontmatter._cwd as string | undefined) ?? this.cwd;
+
+      const workflowResult = await executeWorkflow({
+        workflow,
+        defaultTool: command,
+        args: workflowRunArgs,
+        positionalMappings,
+        templateVars: workflowTemplateVars,
+        env: extractEnvVars(frontmatter),
+        rawOutput: parsed.rawOutput,
+        captureOutput: captureMode,
+        resume: parsed.resume,
+        cacheDir: join(cacheBaseDir, ".mdflow", ".cache"),
+      });
+
+      if (workflowResult.exitCode === 0) {
+        getRecordUsage().then(recordUsage => recordUsage(localFilePath)).catch(() => {}); // Fire and forget
+
+        const promptedVars = (templateVars as Record<string, unknown>)["__promptedVars__"] as Record<string, string> | undefined;
+        const noHistoryFlag = (templateVars as Record<string, unknown>)["__noHistory__"] as boolean | undefined;
+        const resolvedPath = (templateVars as Record<string, unknown>)["__resolvedFilePath__"] as string | undefined;
+
+        if (promptedVars && Object.keys(promptedVars).length > 0 && !noHistoryFlag && resolvedPath) {
+          getSaveVariableValuesFn()
+            .then(saveVars => saveVars(resolvedPath, promptedVars))
+            .catch(() => {}); // Fire and forget
+        }
+      }
+
+      if (isRemote) await cleanupRemote(localFilePath);
+
+      if (workflowResult.exitCode !== 0) {
+        this.printErrorWithLogPath(`Agent exited with code ${workflowResult.exitCode}`, logPath);
+      }
+
+      if (shouldShowMenu && workflowResult.exitCode === 0) {
+        const lastWorkflowOutput = getLastWorkflowOutput(workflowResult);
+        if (lastWorkflowOutput) {
+          try {
+            const { showPostRunMenu, executePostRunAction } = await import("./post-run-menu");
+            const menuResult = await showPostRunMenu(lastWorkflowOutput);
+            if (menuResult && menuResult.action !== "exit") {
+              await executePostRunAction(menuResult, lastWorkflowOutput);
+            }
+          } catch {
+            // Menu cancelled or failed, just continue
+          }
+        }
+      }
+
+      logger.info({
+        exitCode: workflowResult.exitCode,
+        workflowSteps: workflowResult.stepOrder.length,
+        resume: parsed.resume,
+      }, "Workflow session ended");
+      return { exitCode: workflowResult.exitCode, logPath };
+    }
+
     // Dry run
     if (parsed.dryRun) {
       return this.handleDryRun(command, frontmatter, args, [finalBody], positionalMappings, logger, isRemote, localFilePath, logPath);
@@ -655,7 +747,7 @@ export class CliRunner {
     let remainingArgs = [...passthroughArgs];
     let commandFromCli: string | undefined;
     let dryRun = false, trustFlag = false, interactiveFromCli = false, noCache = false, rawOutput = false, editFlag = false;
-    let contextOnly = false, quiet = false, noMenu = false, noHistory = false;
+    let contextOnly = false, quiet = false, noMenu = false, noHistory = false, resume = false;
     let cwdFromCli: string | undefined;
 
     const cmdIdx = remainingArgs.findIndex((a) => a === "--_command" || a === "-_c");
@@ -681,6 +773,8 @@ export class CliRunner {
     // --_no-history flag: skip loading/saving variable history
     const noHistoryIdx = remainingArgs.indexOf("--_no-history");
     if (noHistoryIdx !== -1) { noHistory = true; remainingArgs.splice(noHistoryIdx, 1); }
+    const resumeIdx = remainingArgs.indexOf("--_resume");
+    if (resumeIdx !== -1) { resume = true; remainingArgs.splice(resumeIdx, 1); }
     const intIdx = remainingArgs.findIndex((a) => a === "--_interactive" || a === "-_i");
     if (intIdx !== -1) { interactiveFromCli = true; remainingArgs.splice(intIdx, 1); }
     const cwdIdx = remainingArgs.findIndex((a) => a === "--_cwd");
@@ -697,7 +791,7 @@ export class CliRunner {
     const quietIdx = remainingArgs.indexOf("--_quiet");
     if (quietIdx !== -1) { quiet = true; remainingArgs.splice(quietIdx, 1); }
 
-    return { remainingArgs, commandFromCli, dryRun, editFlag, trustFlag, interactiveFromCli, cwdFromCli, noCache, rawOutput, contextOnly, quiet, noMenu, noHistory };
+    return { remainingArgs, commandFromCli, dryRun, editFlag, trustFlag, interactiveFromCli, cwdFromCli, noCache, rawOutput, contextOnly, quiet, noMenu, noHistory, resume };
   }
 
   private async processAgent(
@@ -739,7 +833,7 @@ export class CliRunner {
 
     // Extract _varname fields from frontmatter and match with --_varname CLI flags
     // Variables starting with _ are template variables (except internal keys)
-    const internalKeys = new Set(["_interactive", "_i", "_cwd", "_subcommand"]);
+    const internalKeys = new Set(["_interactive", "_i", "_cwd", "_subcommand", "_steps"]);
     const namedVarFields = Object.keys(frontmatter).filter((k) => k.startsWith("_") && !internalKeys.has(k));
     for (const key of namedVarFields) {
       const defaultValue = frontmatter[key];
@@ -978,6 +1072,35 @@ export class CliRunner {
     throw new EarlyExitRequest();
   }
 
+  private async handleWorkflowDryRun(
+    command: string,
+    args: string[],
+    workflow: ReturnType<typeof parseWorkflow>,
+    logger: ReturnType<typeof initLogger>,
+    isRemote: boolean,
+    localFilePath: string
+  ): Promise<CliRunResult> {
+    this.writeStdout("═══════════════════════════════════════════════════════════");
+    this.writeStdout("DRY RUN - Workflow will NOT be executed");
+    this.writeStdout("═══════════════════════════════════════════════════════════\n");
+    this.writeStdout("Default command:");
+    this.writeStdout(`   ${command} ${maskArgsArray(args).join(" ")}\n`);
+    this.writeStdout("Workflow steps:");
+
+    for (const batch of workflow.batches) {
+      for (const step of batch) {
+        const tool = step.tool ?? command;
+        const needs = step.needs && step.needs.length > 0 ? ` needs=[${step.needs.join(", ")}]` : "";
+        this.writeStdout(`  - ${step.id} (tool=${tool}${needs})`);
+        this.writeStdout(`    run: ${step.run}`);
+      }
+    }
+
+    if (isRemote) await cleanupRemote(localFilePath);
+    logger.info({ dryRun: true, workflow: true, steps: workflow.steps.length }, "Workflow dry run completed");
+    throw new EarlyExitRequest();
+  }
+
   private async handleTOFU(
     filePath: string, localFilePath: string, command: string,
     baseFrontmatter: Record<string, unknown>, rawBody: string
@@ -1004,6 +1127,17 @@ export class CliRunner {
       getCommandLogger().debug({ domain }, "Domain already trusted");
     }
   }
+}
+
+function getLastWorkflowOutput(result: WorkflowResult): string | undefined {
+  for (let i = result.stepOrder.length - 1; i >= 0; i--) {
+    const stepId = result.stepOrder[i];
+    if (!stepId) continue;
+    const step = result.steps[stepId];
+    if (!step || step.skipped || step.exitCode !== 0) continue;
+    if (step.stdout) return step.stdout;
+  }
+  return undefined;
 }
 
 /**

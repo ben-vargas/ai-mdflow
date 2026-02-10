@@ -14,7 +14,7 @@ export interface IOStreams {
 
 /**
  * Frontmatter keys for underscore-prefixed system/template fields.
- * Examples: `_inputs`, `_env`, `_name`, `_target`.
+ * Examples: `_inputs`, `_env`, `_steps`, `_name`, `_target`.
  */
 export type FrontmatterSystemKey = `_${string}`;
 
@@ -127,6 +127,13 @@ export interface AgentFrontmatter {
    * Uses underscore prefix to avoid namespace collision with CLI --env flags.
    */
   _env?: Record<string, string>;
+
+  /**
+   * Multi-step workflow definition.
+   * When present, mdflow executes `_steps` as a dependency graph instead of
+   * running a single prompt body once.
+   */
+  _steps?: FrontmatterValue[];
 
   /**
    * Context window limit override (in tokens)
