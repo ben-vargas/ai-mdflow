@@ -663,6 +663,11 @@ export class CliRunner {
       commandFromCli = remainingArgs[cmdIdx + 1];
       remainingArgs.splice(cmdIdx, 2);
     }
+    const toolIdx = remainingArgs.findIndex((a) => a === "--tool");
+    if (!commandFromCli && toolIdx !== -1 && toolIdx + 1 < remainingArgs.length) {
+      commandFromCli = remainingArgs[toolIdx + 1];
+      remainingArgs.splice(toolIdx, 2);
+    }
     const dryIdx = remainingArgs.indexOf("--_dry-run");
     if (dryIdx !== -1) { dryRun = true; remainingArgs.splice(dryIdx, 1); }
     const editIdx = remainingArgs.indexOf("--_edit");
@@ -711,7 +716,7 @@ export class CliRunner {
       command = commandFromCli;
       getCommandLogger().debug({ command, source: "cli" }, "Command from --_command flag");
     } else {
-      command = resolveCommand(localFilePath);
+      command = resolveCommand(localFilePath, baseFrontmatter as AgentFrontmatter);
       getCommandLogger().debug({ command }, "Command resolved");
     }
 
@@ -925,7 +930,7 @@ export class CliRunner {
     let finalBody = phase3Body;
 
     const templateVarSet = new Set(Object.keys(templateVars));
-    const args = [...buildArgs(frontmatter, templateVarSet), ...remaining];
+    const args = [...buildArgs(frontmatter, templateVarSet, command), ...remaining];
     const positionalMappings = extractPositionalMappings(frontmatter);
 
     return { command, frontmatter, templateVars, finalBody, args, positionalMappings };

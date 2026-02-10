@@ -308,6 +308,50 @@ export interface ToolAdapter {
    *
    * @param frontmatter - The frontmatter after defaults are applied
    * @returns Transformed frontmatter for interactive mode
-   */
+  */
   applyInteractiveMode(frontmatter: AgentFrontmatter): AgentFrontmatter;
+}
+
+/**
+ * Portable adapter capability flags.
+ * Used by the portable agent spec translation layer.
+ */
+export interface AdapterCapabilities {
+  /** Whether canonical `model` key is supported */
+  model: boolean;
+  /** Whether canonical `temperature` key is supported */
+  temperature: boolean;
+  /** Whether canonical `max-tokens` key is supported */
+  maxTokens: boolean;
+}
+
+/**
+ * Adapter interface for provider-agnostic frontmatter translation.
+ *
+ * This adapter layer maps canonical keys (model, temperature, max-tokens)
+ * to provider-specific CLI flags before argument construction.
+ */
+export interface Adapter {
+  /** Tool/provider name (e.g., "claude", "codex") */
+  name: string;
+  /** Declares canonical key support for this provider */
+  capabilities: AdapterCapabilities;
+
+  /**
+   * Normalize/canonicalize frontmatter before building args.
+   * Example: convert max_tokens/maxTokens to max-tokens.
+   */
+  normalizeFrontmatter(frontmatter: AgentFrontmatter): AgentFrontmatter;
+
+  /**
+   * Build CLI args for this provider from normalized frontmatter.
+   *
+   * `buildGenericArgs` is provided by command.ts and applies generic
+   * key/value -> flag conversion for all non-system keys.
+   */
+  buildArgs(
+    frontmatter: AgentFrontmatter,
+    templateVars: Set<string>,
+    buildGenericArgs: (frontmatter: AgentFrontmatter, templateVars: Set<string>) => string[]
+  ): string[];
 }

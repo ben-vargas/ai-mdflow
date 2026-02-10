@@ -204,8 +204,9 @@ Create options:
   md create -g --model gpt-4    Create globally with frontmatter
 
 Command resolution:
-  1. --_command flag (e.g., md task.md --_command claude)
+  1. --_command / --tool flag (e.g., md task.md --tool claude)
   2. Filename pattern (e.g., task.claude.md → claude)
+  3. Frontmatter key (tool: claude or _tool: claude)
 
 Agent file discovery (in priority order):
   1. Explicit path:      md ./path/to/agent.md
@@ -214,7 +215,7 @@ Agent file discovery (in priority order):
   4. $PATH directories
   5. Current directory:  ./
 
-All frontmatter keys are passed as CLI flags to the command.
+All non-system frontmatter keys are passed as CLI flags to the command.
 Global defaults can be set in ~/.mdflow/config.yaml
 
 Remote execution:
@@ -227,6 +228,7 @@ Examples:
   md task.claude.md --model opus --verbose
   md commit.gemini.md
   md task.md --_command claude
+  md task.md --tool claude
   md task.md -_c gemini
   md task.claude.md --_dry-run    # Preview without executing
   md https://example.com/agent.claude.md            # Remote execution
@@ -239,6 +241,7 @@ Config file example (~/.mdflow/config.yaml):
 
 md-specific flags (consumed, not passed to command):
   --_command, -_c   Specify command to run
+  --tool            Alias for --_command
   --_dry-run        Show resolved command and prompt without executing
   --_edit           Open resolved prompt in $EDITOR before execution
   --_trust          Skip trust prompt for remote URLs (TOFU bypass)

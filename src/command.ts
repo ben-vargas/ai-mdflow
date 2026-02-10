@@ -5,13 +5,13 @@
  * Integrates with ProcessManager for centralized process lifecycle management
  */
 
-import type { AgentFrontmatter } from "./types";
+import type { AgentFrontmatter, Adapter } from "./types";
 import { basename } from "path";
 import { teeToStdoutAndCollect, teeToStderrAndCollect, teeToStdoutWithMarkdownAndCollect } from "./stream";
 import { stopSpinner, isSpinnerRunning } from "./spinner";
 import { getProcessManager } from "./process-manager";
 import { createStreamingRenderer, type StreamingMarkdownRenderer } from "./markdown-renderer";
-import { getRegisteredAdapters } from "./adapters";
+import { getRegisteredAdapters, getPortableAdapter } from "./adapters";
 import { CommandError } from "./errors";
 import { escapeShellArg as escapeShellArgShared } from "./security";
 
@@ -92,6 +92,8 @@ const SYSTEM_KEYS = new Set([
   // Command override
   "_command",
   "_c",
+  "tool",
+  "_tool",
 ]);
 
 /**
@@ -141,48 +143,80 @@ export function hasInteractiveMarker(filePath: string): boolean {
   return /\.i\.[^.]+\.md$/i.test(name);
 }
 
+function validateResolvedCommand(
+  candidate: string,
+  source: "filename" | "frontmatter",
+  filePath: string
+): string {
+  const trimmed = candidate.trim();
+  if (!trimmed) {
+    throw new CommandError(
+      `Unable to resolve command from "${source}" in "${filePath}". The command value is empty.`,
+      {
+        errorCode: "COMMAND_INVALID",
+        context: { filePath, source, suggestion: "Set --_command/--tool, rename to task.<tool>.md, or add frontmatter tool: <tool>." },
+      }
+    );
+  }
+
+  if (!isValidCommandToken(trimmed)) {
+    const didYouMean = formatDidYouMean(trimmed);
+    throw new CommandError(
+      `Invalid command "${trimmed}" from ${source} in "${filePath}".${didYouMean} ` +
+      "Use a command token with letters, numbers, dots, underscores, or hyphens.",
+      {
+        errorCode: "COMMAND_INVALID",
+        context: { filePath, command: trimmed, source },
+      }
+    );
+  }
+
+  return trimmed;
+}
+
 /**
- * Resolve command from filename pattern
- * Note: --_command flag is handled in index.ts before this is called
+ * Extract command from frontmatter keys `tool` or `_tool`.
+ * `tool` takes precedence if both are present.
  */
-export function resolveCommand(filePath: string): string {
+export function parseCommandFromFrontmatter(frontmatter: AgentFrontmatter): string | undefined {
+  const tool = frontmatter.tool;
+  if (typeof tool === "string") return tool;
+
+  const underscoreTool = frontmatter._tool;
+  if (typeof underscoreTool === "string") return underscoreTool;
+
+  return undefined;
+}
+
+/**
+ * Resolve command from sources in priority order:
+ * 1) filename suffix (`task.claude.md`)
+ * 2) frontmatter (`tool:` / `_tool:`)
+ *
+ * Note: --_command/--tool CLI flags are handled in cli-runner.ts before this is called.
+ */
+export function resolveCommand(filePath: string, frontmatter?: AgentFrontmatter): string {
   const fromFilename = parseCommandFromFilename(filePath);
   if (fromFilename) {
-    const candidate = fromFilename.trim();
-    if (!candidate) {
-      throw new CommandError(
-        `Unable to resolve command from "${filePath}". The command segment is empty.`,
-        {
-          errorCode: "COMMAND_INVALID",
-          context: { filePath, suggestion: "Use --_command <tool> or rename to task.<tool>.md" },
-        }
-      );
-    }
+    return validateResolvedCommand(fromFilename, "filename", filePath);
+  }
 
-    if (!isValidCommandToken(candidate)) {
-      const didYouMean = formatDidYouMean(candidate);
-      throw new CommandError(
-        `Invalid command "${candidate}" in filename "${filePath}".${didYouMean} ` +
-        "Use a command token with letters, numbers, dots, underscores, or hyphens.",
-        {
-          errorCode: "COMMAND_INVALID",
-          context: { filePath, command: candidate },
-        }
-      );
+  if (frontmatter) {
+    const fromFrontmatter = parseCommandFromFrontmatter(frontmatter);
+    if (fromFrontmatter) {
+      return validateResolvedCommand(fromFrontmatter, "frontmatter", filePath);
     }
-
-    return candidate;
   }
 
   throw new CommandError(
     `No command specified for "${filePath}". ` +
-    "Use --_command <tool>, or name your file like 'task.claude.md'.",
+    "Use --_command/--tool <provider>, add frontmatter tool: <provider>, or name your file like 'task.claude.md'.",
     {
       errorCode: "COMMAND_MISSING",
       context: {
         filePath,
         knownCommands: getRegisteredAdapters().join(", "),
-        suggestion: "Pass --_command claude (or another installed tool).",
+        suggestion: "Pass --_command (or --tool) claude, or add frontmatter tool: claude.",
       },
     }
   );
@@ -257,7 +291,7 @@ function toFlag(key: string): string {
  * Build CLI args from frontmatter
  * Each key becomes a flag, values become arguments
  */
-export function buildArgs(
+function buildGenericArgs(
   frontmatter: AgentFrontmatter,
   templateVars: Set<string>
 ): string[] {
@@ -307,10 +341,10 @@ export function buildArgs(
       const strValue = String(value);
       // Split comma-separated values for variadic flags
       // Handle both "Read,Edit" and "Bash(git commit:*), Bash(git add:*)"
-      const parts = strValue.includes(', ')
-        ? strValue.split(', ')  // Split on ", " (comma + space)
-        : strValue.includes(',')
-          ? strValue.split(',')  // Split on just ","
+      const parts = strValue.includes(", ")
+        ? strValue.split(", ")  // Split on ", " (comma + space)
+        : strValue.includes(",")
+          ? strValue.split(",")  // Split on just ","
           : [strValue];          // No commas, single value
       for (const part of parts) {
         args.push(`${toFlag(key)}=${part.trim()}`);
@@ -321,6 +355,28 @@ export function buildArgs(
   }
 
   return args;
+}
+
+/**
+ * Resolve portable adapter for a command/provider.
+ */
+export function getAdapter(command: string): Adapter | undefined {
+  if (!command) return undefined;
+  return getPortableAdapter(command);
+}
+
+export function buildArgs(
+  frontmatter: AgentFrontmatter,
+  templateVars: Set<string>,
+  command?: string
+): string[] {
+  const adapter = command ? getAdapter(command) : undefined;
+  if (!adapter) {
+    return buildGenericArgs(frontmatter, templateVars);
+  }
+
+  const normalized = adapter.normalizeFrontmatter(frontmatter);
+  return adapter.buildArgs(normalized, templateVars, buildGenericArgs);
 }
 
 /**
