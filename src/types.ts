@@ -195,6 +195,14 @@ export interface AgentFrontmatter {
   _max_runtime_ms?: number;
 
   /**
+   * Engine (agent CLI) that executes this flow, e.g. "claude", "codex", "pi".
+   * v3 system key — replaces the deprecated `tool:`/`_tool:` aliases and is
+   * never passed as a CLI flag. When absent, the resolution ladder applies
+   * (env var, filename, config, then the built-in default).
+   */
+  engine?: string;
+
+  /**
    * Context window limit override (in tokens)
    * If set, overrides the model-based default context limit
    * Useful for custom models or when you want to enforce a specific limit
@@ -296,6 +304,13 @@ export interface Logger {
  * Global configuration structure for mdflow
  */
 export interface GlobalConfig {
+  /**
+   * Default engine for flows that don't name one via filename or frontmatter.
+   * Project config (mdflow.config.yaml / .mdflow.yaml / .mdflow.json) beats
+   * ~/.mdflow/config.yaml; the built-in default applies when neither sets it.
+   */
+  engine?: string;
+
   /** Default settings per command */
   commands?: Record<string, CommandDefaults>;
 }

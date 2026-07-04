@@ -102,6 +102,7 @@ const commandDefaultsSchema = z.record(
  * ```
  */
 export const globalConfigSchema = z.object({
+  engine: z.string().min(1).optional(),
   commands: z.record(z.string(), commandDefaultsSchema).optional(),
 }).strict().describe("Global mdflow configuration");
 

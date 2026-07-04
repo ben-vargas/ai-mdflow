@@ -443,6 +443,10 @@ export async function loadFullConfig(cwd: string = process.cwd()): Promise<Globa
 function deepCloneConfig(config: GlobalConfig): GlobalConfig {
   const result: GlobalConfig = {};
 
+  if (config.engine !== undefined) {
+    result.engine = config.engine;
+  }
+
   if (config.commands) {
     result.commands = {};
     for (const [cmd, defaults] of Object.entries(config.commands)) {
@@ -460,6 +464,10 @@ function deepCloneConfig(config: GlobalConfig): GlobalConfig {
 export function mergeConfigs(base: GlobalConfig, override: GlobalConfig): GlobalConfig {
   // Start with a deep clone of base
   const result = deepCloneConfig(base);
+
+  if (override.engine !== undefined) {
+    result.engine = override.engine;
+  }
 
   if (override.commands) {
     result.commands = result.commands ? { ...result.commands } : {};

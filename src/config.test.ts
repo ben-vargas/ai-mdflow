@@ -8,6 +8,7 @@ import {
   findGitRoot,
   loadProjectConfig,
   loadFullConfig,
+  mergeConfigs,
   clearProjectConfigCache,
 } from "./config";
 import type { AgentFrontmatter } from "./types";
@@ -217,6 +218,19 @@ describe("loadFullConfig", () => {
 
     const config = await loadFullConfig(testDir);
     expect(config.commands?.copilot?.$1).toBe("custom-prompt");
+  });
+
+  test("project config can set the default engine", async () => {
+    writeFileSync(join(testDir, "mdflow.config.yaml"), `engine: claude\n`);
+
+    const config = await loadFullConfig(testDir);
+    expect(config.engine).toBe("claude");
+  });
+
+  test("mergeConfigs: override engine wins, base engine survives otherwise", () => {
+    expect(mergeConfigs({ engine: "claude" }, { engine: "codex" }).engine).toBe("codex");
+    expect(mergeConfigs({ engine: "claude" }, {}).engine).toBe("claude");
+    expect(mergeConfigs({}, {}).engine).toBeUndefined();
   });
 
   test("project config adds new commands", async () => {

@@ -75,7 +75,7 @@ Test content from file`);
       expect(result.exitCode).toBe(0);
     });
 
-    it("throws error for missing command in filename", async () => {
+    it("prints a frontmatter-less file as a document instead of executing it (v3)", async () => {
       env.addFile("/test/nocommand.md", `---
 ---
 Just some content`);
@@ -87,8 +87,8 @@ Just some content`);
       });
 
       const result = await runner.run(["node", "md", "/test/nocommand.md"]);
-      expect(result.exitCode).toBe(1);
-      expect(result.errorMessage).toContain("No command specified");
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeUndefined();
     });
   });
 
@@ -320,7 +320,7 @@ Test content`);
       expect(result.errorMessage).toContain("File not found");
     });
 
-    it("returns structured error for command resolution failure", async () => {
+    it("treats an engine-less frontmatter-less file as a document, exit 0 (v3)", async () => {
       env.addFile("/test/no-cmd.md", `---
 ---
 Content without command`);
@@ -332,8 +332,8 @@ Content without command`);
       });
 
       const result = await runner.run(["node", "md", "/test/no-cmd.md"]);
-      expect(result.exitCode).toBe(1);
-      expect(result.errorMessage).toContain("No command specified");
+      expect(result.exitCode).toBe(0);
+      expect(result.errorMessage).toBeUndefined();
     });
   });
 

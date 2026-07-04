@@ -1,5 +1,5 @@
 import { expect, test, describe, spyOn, beforeEach, afterEach } from "bun:test";
-import { parseCommandFromFilename, resolveCommand, buildArgs, extractPositionalMappings, extractEnvVars, getCurrentChildProcess, killCurrentChildProcess, runCommand, type CaptureMode } from "./command";
+import { parseCommandFromFilename, resolveCommand, resolveEngine, DEFAULT_ENGINE, buildArgs, extractPositionalMappings, extractEnvVars, getCurrentChildProcess, killCurrentChildProcess, runCommand, type CaptureMode } from "./command";
 import type { AgentFrontmatter } from "./types";
 import { CommandError } from "./errors";
 
@@ -32,18 +32,65 @@ describe("resolveCommand", () => {
     expect(resolveCommand("review.gemini.md")).toBe("gemini");
   });
 
-  test("throws when no command can be resolved", () => {
-    expect(() => resolveCommand("task.md")).toThrow("No command specified");
+  test("falls back to the default engine instead of throwing (v3)", () => {
+    expect(resolveCommand("task.md")).toBe(DEFAULT_ENGINE);
+  });
+});
+
+describe("resolveEngine ladder", () => {
+  const noEnv = { env: {} };
+
+  test("defaults to DEFAULT_ENGINE when nothing names an engine", () => {
+    const resolved = resolveEngine("task.md", undefined, noEnv);
+    expect(resolved.engine).toBe(DEFAULT_ENGINE);
+    expect(resolved.source).toBe("default");
   });
 
-  test("throws typed CommandError with code when missing command", () => {
-    try {
-      resolveCommand("task.md");
-      throw new Error("Expected resolveCommand to throw");
-    } catch (err) {
-      expect(err).toBeInstanceOf(CommandError);
-      expect((err as CommandError).errorCode).toBe("COMMAND_MISSING");
-    }
+  test("config engine beats the built-in default", () => {
+    const resolved = resolveEngine("task.md", undefined, { ...noEnv, configEngine: "claude" });
+    expect(resolved).toEqual({ engine: "claude", source: "config" });
+  });
+
+  test("frontmatter engine: beats config", () => {
+    const resolved = resolveEngine("task.md", { engine: "codex" }, { ...noEnv, configEngine: "claude" });
+    expect(resolved).toEqual({ engine: "codex", source: "frontmatter" });
+  });
+
+  test("filename beats frontmatter", () => {
+    const resolved = resolveEngine("task.claude.md", { engine: "codex" }, noEnv);
+    expect(resolved).toEqual({ engine: "claude", source: "filename" });
+  });
+
+  test("MDFLOW_ENGINE env var beats filename", () => {
+    const resolved = resolveEngine("task.claude.md", undefined, { env: { MDFLOW_ENGINE: "codex" } });
+    expect(resolved).toEqual({ engine: "codex", source: "env" });
+  });
+
+  test("deprecated tool: alias resolves but is flagged", () => {
+    const resolved = resolveEngine("task.md", { tool: "claude" }, noEnv);
+    expect(resolved).toEqual({ engine: "claude", source: "frontmatter", deprecatedKey: "tool" });
+  });
+
+  test("deprecated _tool: alias resolves but is flagged", () => {
+    const resolved = resolveEngine("task.md", { _tool: "claude" }, noEnv);
+    expect(resolved).toEqual({ engine: "claude", source: "frontmatter", deprecatedKey: "_tool" });
+  });
+
+  test("engine: beats deprecated aliases without a deprecation flag", () => {
+    const resolved = resolveEngine("task.md", { engine: "codex", tool: "claude" }, noEnv);
+    expect(resolved).toEqual({ engine: "codex", source: "frontmatter" });
+  });
+
+  test("invalid engine tokens still throw typed errors", () => {
+    expect(() => resolveEngine("task.md", { engine: "cl aude!" }, noEnv)).toThrow(CommandError);
+    expect(() => resolveEngine("task.md", undefined, { env: { MDFLOW_ENGINE: "no/slashes here" } })).toThrow(
+      CommandError
+    );
+  });
+
+  test("blank env and config values are ignored", () => {
+    const resolved = resolveEngine("task.md", undefined, { env: { MDFLOW_ENGINE: "  " }, configEngine: "" });
+    expect(resolved.source).toBe("default");
   });
 });
 

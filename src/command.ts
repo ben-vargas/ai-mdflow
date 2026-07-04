@@ -89,7 +89,8 @@ const SYSTEM_KEYS = new Set([
   "_no-cache",
   "_no-menu", // Disable post-run action menu
 
-  // Command override
+  // Engine selection (v3 key + deprecated v2 aliases)
+  "engine",
   "_command",
   "_c",
   "tool",
@@ -145,7 +146,7 @@ export function hasInteractiveMarker(filePath: string): boolean {
 
 function validateResolvedCommand(
   candidate: string,
-  source: "filename" | "frontmatter",
+  source: "filename" | "frontmatter" | "env" | "config",
   filePath: string
 ): string {
   const trimmed = candidate.trim();
@@ -175,8 +176,44 @@ function validateResolvedCommand(
 }
 
 /**
- * Extract command from frontmatter keys `tool` or `_tool`.
- * `tool` takes precedence if both are present.
+ * The engine used when nothing else names one. pi is the flagship learnable
+ * engine (full event telemetry, subscription auth bridge), so it is the v3
+ * default; every other engine is one `engine:` line away.
+ */
+export const DEFAULT_ENGINE = "pi";
+
+/** Which rung of the resolution ladder produced the engine. */
+export type EngineSource = "cli" | "env" | "filename" | "frontmatter" | "config" | "default";
+
+export interface ResolvedEngine {
+  engine: string;
+  source: EngineSource;
+  /** Set when the engine came from a deprecated frontmatter key. */
+  deprecatedKey?: "tool" | "_tool";
+}
+
+/**
+ * Extract the engine from frontmatter. `engine:` is the v3 key; `tool:` and
+ * `_tool:` are deprecated v2 aliases (in that precedence order).
+ */
+export function parseEngineFromFrontmatter(
+  frontmatter: AgentFrontmatter
+): { engine: string; key: "engine" | "tool" | "_tool" } | undefined {
+  const engine = frontmatter.engine;
+  if (typeof engine === "string") return { engine, key: "engine" };
+
+  const tool = frontmatter.tool;
+  if (typeof tool === "string") return { engine: tool, key: "tool" };
+
+  const underscoreTool = frontmatter._tool;
+  if (typeof underscoreTool === "string") return { engine: underscoreTool, key: "_tool" };
+
+  return undefined;
+}
+
+/**
+ * @deprecated v3: use `parseEngineFromFrontmatter` (this reads only the
+ * legacy `tool:`/`_tool:` keys).
  */
 export function parseCommandFromFrontmatter(frontmatter: AgentFrontmatter): string | undefined {
   const tool = frontmatter.tool;
@@ -189,37 +226,62 @@ export function parseCommandFromFrontmatter(frontmatter: AgentFrontmatter): stri
 }
 
 /**
- * Resolve command from sources in priority order:
- * 1) filename suffix (`task.claude.md`)
- * 2) frontmatter (`tool:` / `_tool:`)
+ * Resolve the engine for a flow file. The ladder, most explicit first:
  *
- * Note: --_command/--tool CLI flags are handled in cli-runner.ts before this is called.
+ * 1) `--engine` CLI flag        (handled upstream in cli-runner)
+ * 2) MDFLOW_ENGINE env var      ("run everything on X" override)
+ * 3) filename suffix            (`task.claude.md`)
+ * 4) frontmatter `engine:`      (aliases: deprecated `tool:`/`_tool:`)
+ * 5) config `engine:`           (project config beats ~/.mdflow/config.yaml)
+ * 6) built-in default           (DEFAULT_ENGINE)
+ *
+ * Resolution never fails for a missing engine — the default always applies.
+ * Callers decide what implicit resolution means (e.g. a frontmatter-less file
+ * resolved implicitly is a document, not a flow) and surface `source` to the
+ * user so defaults stay inspectable, never magic.
  */
-export function resolveCommand(filePath: string, frontmatter?: AgentFrontmatter): string {
+export function resolveEngine(
+  filePath: string,
+  frontmatter?: AgentFrontmatter,
+  opts: { configEngine?: string; env?: Record<string, string | undefined> } = {}
+): ResolvedEngine {
+  const env = opts.env ?? process.env;
+
+  const fromEnv = env.MDFLOW_ENGINE;
+  if (typeof fromEnv === "string" && fromEnv.trim()) {
+    return { engine: validateResolvedCommand(fromEnv, "env", filePath), source: "env" };
+  }
+
   const fromFilename = parseCommandFromFilename(filePath);
   if (fromFilename) {
-    return validateResolvedCommand(fromFilename, "filename", filePath);
+    return { engine: validateResolvedCommand(fromFilename, "filename", filePath), source: "filename" };
   }
 
   if (frontmatter) {
-    const fromFrontmatter = parseCommandFromFrontmatter(frontmatter);
+    const fromFrontmatter = parseEngineFromFrontmatter(frontmatter);
     if (fromFrontmatter) {
-      return validateResolvedCommand(fromFrontmatter, "frontmatter", filePath);
+      return {
+        engine: validateResolvedCommand(fromFrontmatter.engine, "frontmatter", filePath),
+        source: "frontmatter",
+        ...(fromFrontmatter.key === "engine" ? {} : { deprecatedKey: fromFrontmatter.key }),
+      };
     }
   }
 
-  throw new CommandError(
-    `No command specified for "${filePath}". ` +
-    "Use --_command/--tool <provider>, add frontmatter tool: <provider>, or name your file like 'task.claude.md'.",
-    {
-      errorCode: "COMMAND_MISSING",
-      context: {
-        filePath,
-        knownCommands: getRegisteredAdapters().join(", "),
-        suggestion: "Pass --_command (or --tool) claude, or add frontmatter tool: claude.",
-      },
-    }
-  );
+  if (typeof opts.configEngine === "string" && opts.configEngine.trim()) {
+    return { engine: validateResolvedCommand(opts.configEngine, "config", filePath), source: "config" };
+  }
+
+  return { engine: DEFAULT_ENGINE, source: "default" };
+}
+
+/**
+ * @deprecated v3: use `resolveEngine`, which also reports the resolution
+ * source. This wrapper keeps the engine-only signature and, unlike v2, never
+ * throws for a missing command — the default engine applies instead.
+ */
+export function resolveCommand(filePath: string, frontmatter?: AgentFrontmatter): string {
+  return resolveEngine(filePath, frontmatter).engine;
 }
 
 const VALID_COMMAND_TOKEN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;

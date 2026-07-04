@@ -20,7 +20,7 @@ import {
 import { substituteTemplateVars, extractTemplateVars } from "./template";
 import { isRemoteUrl, fetchRemote, cleanupRemote } from "./remote";
 import {
-  resolveCommand, buildArgs, runCommand, extractPositionalMappings,
+  resolveEngine, type EngineSource, buildArgs, runCommand, extractPositionalMappings,
   extractEnvVars, killCurrentChildProcess, hasInteractiveMarker,
 } from "./command";
 import { parseWorkflow, executeWorkflow, type WorkflowResult } from "./workflow";
@@ -36,14 +36,14 @@ import {
 } from "./context-dashboard";
 import { loadEnvFiles } from "./env";
 import {
-  loadGlobalConfig, getCommandDefaults, applyDefaults, applyInteractiveMode,
+  loadGlobalConfig, loadFullConfig, getCommandDefaults, applyDefaults, applyInteractiveMode,
 } from "./config";
 import {
   initLogger, getParseLogger, getTemplateLogger, getCommandLogger,
   getImportLogger, getCurrentLogPath,
 } from "./logger";
 import { isDomainTrusted, promptForTrust, addTrustedDomain, extractDomain } from "./trust";
-import { dirname, resolve, join, delimiter, sep } from "path";
+import { basename, dirname, resolve, join, delimiter, sep } from "path";
 import { homedir } from "os";
 // Lazy-load heavy dependencies for cold start optimization
 import { exceedsLimit, StdinSizeLimitError } from "./limits";
@@ -1290,14 +1290,20 @@ export class CliRunner {
     let jsonMode = false;
     let cwdFromCli: string | undefined;
 
+    // --engine is the v3 flag; --_command/-_c and --tool are deprecated aliases.
+    const engineIdx = remainingArgs.findIndex((a) => a === "--engine");
+    if (engineIdx !== -1 && engineIdx + 1 < remainingArgs.length) {
+      commandFromCli = remainingArgs[engineIdx + 1];
+      remainingArgs.splice(engineIdx, 2);
+    }
     const cmdIdx = remainingArgs.findIndex((a) => a === "--_command" || a === "-_c");
     if (cmdIdx !== -1 && cmdIdx + 1 < remainingArgs.length) {
-      commandFromCli = remainingArgs[cmdIdx + 1];
+      if (!commandFromCli) commandFromCli = remainingArgs[cmdIdx + 1];
       remainingArgs.splice(cmdIdx, 2);
     }
     const toolIdx = remainingArgs.findIndex((a) => a === "--tool");
-    if (!commandFromCli && toolIdx !== -1 && toolIdx + 1 < remainingArgs.length) {
-      commandFromCli = remainingArgs[toolIdx + 1];
+    if (toolIdx !== -1 && toolIdx + 1 < remainingArgs.length) {
+      if (!commandFromCli) commandFromCli = remainingArgs[toolIdx + 1];
       remainingArgs.splice(toolIdx, 2);
     }
     const dryIdx = remainingArgs.indexOf("--_dry-run");
@@ -1346,14 +1352,44 @@ export class CliRunner {
     const { remainingArgs, commandFromCli, interactiveFromCli, cwdFromCli, noHistory, jsonMode } = parsed;
     let remaining = [...remainingArgs];
 
-    // Resolve command
+    // Resolve the engine via the v3 ladder: CLI flag > env > filename >
+    // frontmatter > config > built-in default.
     let command: string;
+    let engineSource: EngineSource = "cli";
     if (commandFromCli) {
       command = commandFromCli;
-      getCommandLogger().debug({ command, source: "cli" }, "Command from --_command flag");
+      getCommandLogger().debug({ command, source: "cli" }, "Engine from --engine flag");
     } else {
-      command = resolveCommand(localFilePath, baseFrontmatter as AgentFrontmatter);
-      getCommandLogger().debug({ command }, "Command resolved");
+      const fullConfig = await loadFullConfig(process.cwd());
+      const resolved = resolveEngine(localFilePath, baseFrontmatter as AgentFrontmatter, {
+        configEngine: fullConfig.engine,
+      });
+      command = resolved.engine;
+      engineSource = resolved.source;
+      getCommandLogger().debug({ command, source: engineSource }, "Engine resolved");
+      if (resolved.deprecatedKey) {
+        this.writeStderr(
+          `Warning [ENGINE_KEY_DEPRECATED]: frontmatter "${resolved.deprecatedKey}:" is deprecated; use "engine: ${command}".`
+        );
+      }
+    }
+
+    const engineIsImplicit =
+      engineSource === "env" || engineSource === "config" || engineSource === "default";
+
+    // A markdown file with no frontmatter and no explicit engine is a
+    // document, not a flow — print it instead of executing it. Frontmatter
+    // (or a filename/flag engine) is what marks a file as executable.
+    if (engineIsImplicit && Object.keys(baseFrontmatter).length === 0) {
+      this.writeStdout(await this.env.fs.readText(localFilePath));
+      throw new EarlyExitRequest();
+    }
+
+    // Implicit resolution is allowed but never silent: say which engine won
+    // and which rung of the ladder chose it.
+    if (engineIsImplicit && !parsed.quiet && !jsonMode) {
+      const dim = process.stderr.isTTY ? ["\x1b[2m", "\x1b[0m"] : ["", ""];
+      this.writeStderr(`${dim[0]}${basename(localFilePath)} → ${command} (engine: ${engineSource})${dim[1]}`);
     }
 
     await loadGlobalConfig();
@@ -1555,12 +1591,6 @@ export class CliRunner {
         getImportLogger().error({ error: (err as Error).message }, "Phase 3 command expansion failed");
         throw new ImportError(`Command error: ${(err as Error).message}`);
       }
-    }
-
-    // Cat file if no frontmatter
-    if (Object.keys(baseFrontmatter).length === 0 && !commandDefaults) {
-      try { resolveCommand(localFilePath); }
-      catch { this.writeStdout(await this.env.fs.readText(localFilePath)); throw new EarlyExitRequest(); }
     }
 
     let finalBody = phase3Body;
