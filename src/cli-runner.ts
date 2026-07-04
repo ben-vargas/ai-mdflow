@@ -1376,6 +1376,11 @@ export class CliRunner {
           `Warning [ENGINE_KEY_DEPRECATED]: frontmatter "${resolved.deprecatedKey}:" is deprecated; use "engine: ${command}".`
         );
       }
+      if (resolved.skippedFilenameEngine) {
+        this.writeStderr(
+          `Warning [ENGINE_NOT_FOUND]: filename names engine "${resolved.skippedFilenameEngine}" but no such adapter or binary exists — using ${command} (${engineSource}). Rename the file or install the engine if that was intended.`
+        );
+      }
     }
 
     const engineIsImplicit =

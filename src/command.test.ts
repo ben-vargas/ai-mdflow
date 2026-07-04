@@ -88,6 +88,25 @@ describe("resolveEngine ladder", () => {
     );
   });
 
+  test("filename engine wins only when it names a runnable engine", () => {
+    // Registered adapter: wins.
+    expect(resolveEngine("t.claude.md", undefined, noEnv)).toEqual({ engine: "claude", source: "filename" });
+    // PATH binary that is not a registered adapter: wins (custom engines).
+    expect(resolveEngine("t.echo.md", undefined, noEnv)).toEqual({ engine: "echo", source: "filename" });
+  });
+
+  test("unknown filename engine falls through and is reported", () => {
+    const resolved = resolveEngine("report.nonexistent-command-xyz.md", undefined, noEnv);
+    expect(resolved.engine).toBe(DEFAULT_ENGINE);
+    expect(resolved.source).toBe("default");
+    expect(resolved.skippedFilenameEngine).toBe("nonexistent-command-xyz");
+
+    // Frontmatter still wins over the skipped filename, and the skip is kept.
+    const withFm = resolveEngine("report.nonexistent-command-xyz.md", { engine: "claude" }, noEnv);
+    expect(withFm.engine).toBe("claude");
+    expect(withFm.skippedFilenameEngine).toBe("nonexistent-command-xyz");
+  });
+
   test("blank env and config values are ignored", () => {
     const resolved = resolveEngine("task.md", undefined, { env: { MDFLOW_ENGINE: "  " }, configEngine: "" });
     expect(resolved.source).toBe("default");

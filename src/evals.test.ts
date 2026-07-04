@@ -146,6 +146,46 @@ describe("runEvalSuite", () => {
   });
 });
 
+describe("runEvalCli guardrails", () => {
+  test("a filter matching zero cases exits 1 instead of reporting a hollow pass", async () => {
+    const { runEvalCli } = await import("./evals");
+    const flow = join(tempDir, "guard.md");
+    writeFileSync(flow, "---\nengine: echo\n---\nbody\n");
+    writeFileSync(
+      join(tempDir, "guard.eval.ts"),
+      `const cases = [{ name: "only case", check: () => null }];\nexport default cases;\n`
+    );
+
+    const origError = console.error;
+    const errors: string[] = [];
+    console.error = (...a: unknown[]) => errors.push(a.join(" "));
+    try {
+      const code = await runEvalCli([flow, "--filter", "zzz-no-match"]);
+      expect(code).toBe(1);
+      expect(errors.join("\n")).toContain("no cases match");
+    } finally {
+      console.error = origError;
+    }
+  });
+
+  test("missing suite exits 1 with the expected path in the message", async () => {
+    const { runEvalCli } = await import("./evals");
+    const flow = join(tempDir, "nosuite.md");
+    writeFileSync(flow, "---\nengine: echo\n---\nbody\n");
+
+    const origError = console.error;
+    const errors: string[] = [];
+    console.error = (...a: unknown[]) => errors.push(a.join(" "));
+    try {
+      const code = await runEvalCli([flow]);
+      expect(code).toBe(1);
+      expect(errors.join("\n")).toContain("nosuite.eval.ts");
+    } finally {
+      console.error = origError;
+    }
+  });
+});
+
 describe("trust ledger", () => {
   test("full clean run stamps lastCleanAt; later failure preserves it", () => {
     const ledger = join(tempDir, "eval-results.json");

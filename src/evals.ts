@@ -252,6 +252,10 @@ export async function runEvalCli(args: string[], cliPath?: string): Promise<numb
   const selectedCount = filter
     ? cases.filter((c) => c.name.toLowerCase().includes(filter.toLowerCase())).length
     : cases.length;
+  if (selectedCount === 0) {
+    console.error(`no cases match --filter "${filter}" (suite has: ${cases.map((c) => c.name).join(", ")})`);
+    return 1;
+  }
   console.log(
     `${basename(flowPath)}: ${selectedCount} case${selectedCount === 1 ? "" : "s"} × 1 flow run each — ${selectedCount} engine turn${selectedCount === 1 ? "" : "s"} will be spent`
   );

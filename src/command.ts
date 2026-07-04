@@ -11,7 +11,7 @@ import { teeToStdoutAndCollect, teeToStderrAndCollect, teeToStdoutWithMarkdownAn
 import { stopSpinner, isSpinnerRunning } from "./spinner";
 import { getProcessManager } from "./process-manager";
 import { createStreamingRenderer, type StreamingMarkdownRenderer } from "./markdown-renderer";
-import { getRegisteredAdapters, getPortableAdapter, getAdapter as getEngineAdapter } from "./adapters";
+import { getRegisteredAdapters, getPortableAdapter, getAdapter as getEngineAdapter, hasAdapter } from "./adapters";
 import { CommandError } from "./errors";
 import { escapeShellArg as escapeShellArgShared } from "./security";
 
@@ -190,6 +190,28 @@ export interface ResolvedEngine {
   source: EngineSource;
   /** Set when the engine came from a deprecated frontmatter key. */
   deprecatedKey?: "tool" | "_tool";
+  /**
+   * Set when the filename had an engine-shaped segment that names no known
+   * engine (no registered adapter, no binary on PATH) — e.g. report.final.md.
+   * The ladder fell through; callers should surface this so a typo like
+   * task.claud.md doesn't silently run on the default engine.
+   */
+  skippedFilenameEngine?: string;
+}
+
+/**
+ * A filename segment only claims the engine rung when it names something
+ * that can actually run: a registered adapter or a binary on PATH. This keeps
+ * v3's bare dotted filenames (report.final.md) from being misread as engines
+ * while .echo.md-style custom engines keep working.
+ */
+function filenameEngineExists(candidate: string): boolean {
+  if (hasAdapter(candidate)) return true;
+  try {
+    return Bun.which(candidate) !== null;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -253,26 +275,36 @@ export function resolveEngine(
   }
 
   const fromFilename = parseCommandFromFilename(filePath);
+  let skippedFilenameEngine: string | undefined;
   if (fromFilename) {
-    return { engine: validateResolvedCommand(fromFilename, "filename", filePath), source: "filename" };
+    // Filenames are names, not declarations — the segment only wins when it
+    // names a runnable engine; otherwise fall through (and report the skip so
+    // callers can warn about likely typos like task.claud.md).
+    if (isValidCommandToken(fromFilename.trim()) && filenameEngineExists(fromFilename.trim())) {
+      return { engine: fromFilename.trim(), source: "filename" };
+    }
+    skippedFilenameEngine = fromFilename;
   }
+
+  const withSkip = (resolved: ResolvedEngine): ResolvedEngine =>
+    skippedFilenameEngine ? { ...resolved, skippedFilenameEngine } : resolved;
 
   if (frontmatter) {
     const fromFrontmatter = parseEngineFromFrontmatter(frontmatter);
     if (fromFrontmatter) {
-      return {
+      return withSkip({
         engine: validateResolvedCommand(fromFrontmatter.engine, "frontmatter", filePath),
         source: "frontmatter",
         ...(fromFrontmatter.key === "engine" ? {} : { deprecatedKey: fromFrontmatter.key }),
-      };
+      });
     }
   }
 
   if (typeof opts.configEngine === "string" && opts.configEngine.trim()) {
-    return { engine: validateResolvedCommand(opts.configEngine, "config", filePath), source: "config" };
+    return withSkip({ engine: validateResolvedCommand(opts.configEngine, "config", filePath), source: "config" });
   }
 
-  return { engine: DEFAULT_ENGINE, source: "default" };
+  return withSkip({ engine: DEFAULT_ENGINE, source: "default" });
 }
 
 /**
