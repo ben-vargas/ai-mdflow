@@ -392,6 +392,15 @@ export interface ToolAdapter {
    * @returns Transformed frontmatter for interactive mode
   */
   applyInteractiveMode(frontmatter: AgentFrontmatter): AgentFrontmatter;
+
+  /**
+   * Optional: contribute environment variables to the engine process, called
+   * once just before spawn. Adapter vars never override an existing
+   * process.env value or explicit run env (e.g. frontmatter _env).
+   * Used by the pi adapter to point PI_CODING_AGENT_DIR at the bridged,
+   * hermetic agent dir.
+   */
+  prepareEnv?(): Record<string, string> | undefined;
 }
 
 /**

@@ -15,6 +15,7 @@
  */
 
 import type { ToolAdapter, CommandDefaults, AgentFrontmatter } from "../types";
+import { ensureBridgedPiAgentDir } from "./pi-auth";
 
 export const piAdapter: ToolAdapter = {
   name: "pi",
@@ -35,6 +36,12 @@ export const piAdapter: ToolAdapter = {
     // Remove --print (interactive is default without it); keep isolation.
     delete result.print;
     return result;
+  },
+
+  prepareEnv(): Record<string, string> | undefined {
+    // Respect an explicit user override of the agent dir.
+    if (process.env.PI_CODING_AGENT_DIR) return undefined;
+    return { PI_CODING_AGENT_DIR: ensureBridgedPiAgentDir() };
   },
 };
 

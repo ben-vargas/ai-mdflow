@@ -11,7 +11,7 @@ import { teeToStdoutAndCollect, teeToStderrAndCollect, teeToStdoutWithMarkdownAn
 import { stopSpinner, isSpinnerRunning } from "./spinner";
 import { getProcessManager } from "./process-manager";
 import { createStreamingRenderer, type StreamingMarkdownRenderer } from "./markdown-renderer";
-import { getRegisteredAdapters, getPortableAdapter } from "./adapters";
+import { getRegisteredAdapters, getPortableAdapter, getAdapter as getEngineAdapter } from "./adapters";
 import { CommandError } from "./errors";
 import { escapeShellArg as escapeShellArgShared } from "./security";
 
@@ -628,9 +628,24 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
     return { exitCode: 127, stdout: "", stderr: "", output: "", process: null as unknown as ReturnType<typeof Bun.spawn> };
   }
 
+  // Engine adapters may contribute env vars (e.g. pi's bridged auth dir).
+  // Precedence: adapter vars < process.env < explicit ctx.env — an adapter
+  // never overrides something the user already set.
+  let adapterEnv: Record<string, string> | undefined;
+  // NOTE: command.ts exports its own getAdapter (the portable-key layer), so
+  // the registry lookup is imported under a distinct name.
+  const engineAdapter = getEngineAdapter(normalizedCommand);
+  if (engineAdapter.prepareEnv) {
+    try {
+      adapterEnv = engineAdapter.prepareEnv();
+    } catch (err) {
+      console.error(`Warning [ADAPTER_ENV]: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // Merge process.env with provided env
-  const runEnv = env
-    ? { ...process.env, ...env }
+  const runEnv = env || adapterEnv
+    ? { ...adapterEnv, ...process.env, ...env }
     : undefined;
 
   // Determine stdout/stderr pipe config based on mode
