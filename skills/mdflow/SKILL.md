@@ -29,7 +29,7 @@ the user. Dry runs are free.
 ## Step 0: is mdflow installed? (free)
 
 ```bash
-command -v md || npm i -g mdflow@next   # v3 prerelease; drop @next once 3.0 ships
+command -v md || npm i -g mdflow
 ```
 
 ## The roster convention

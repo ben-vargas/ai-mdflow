@@ -10,7 +10,7 @@ git diff | explain.md            # Pipe through any command
 
 ---
 
-## New in v3 (prerelease on the `next` tag)
+## New in v3
 
 **Markdown agents that evolve.** One file per agent. Any engine. Evals that
 prove behavior. Every run makes them better.
