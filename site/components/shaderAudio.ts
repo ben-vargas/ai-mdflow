@@ -876,13 +876,28 @@ class ShaderAudioEngine {
   }
 
   /** A slingshot dart wounds a monster (not yet down): a sharp two-blip
-   * damage chirp on the creature's own voice. */
-  monsterHit(seed: number) {
-    const f = this.monsterNote(seed) * 2;
+   * damage chirp on the creature's own voice. The BOSS answers an octave
+   * below with a chest-thump — a hit you feel, not a squeak. */
+  monsterHit(seed: number, boss = false) {
+    const f = this.monsterNote(seed) * (boss ? 0.5 : 2);
     this.playNotes([
-      { f: f * 1.5, type: 'square', gain: 0.032, decay: 0.05 },
-      { f: f * 0.75, at: 0.05, type: 'square', gain: 0.026, decay: 0.1, wet: 0.2 },
+      { f: f * 1.5, type: 'square', gain: boss ? 0.045 : 0.032, decay: boss ? 0.09 : 0.05 },
+      { f: f * 0.75, at: 0.05, type: 'square', gain: boss ? 0.04 : 0.026, decay: boss ? 0.16 : 0.1, wet: 0.2 },
     ]);
+    if (boss) this.note(55, { type: 'sine', gain: 0.12, decay: 0.22 });
+  }
+
+  /** The BOSS descends: a three-step falling growl into a sub landing. */
+  bossSpawn(seed: number) {
+    if (!this.ready()) return;
+    const f = this.monsterNote(seed);
+    this.playNotes([
+      { f: f, type: 'sawtooth', gain: 0.035, decay: 0.2 },
+      { f: f * 0.75, at: 0.22, type: 'sawtooth', gain: 0.04, decay: 0.22 },
+      { f: f * 0.5, at: 0.46, type: 'sawtooth', gain: 0.045, decay: 0.5, wet: 0.3 },
+    ]);
+    this.whoosh(900, 60, 0.9, 0.09);
+    this.subBoom(1.2);
   }
 
   /** The invasion tempo: how many aliens roam, whose voice leads, and
@@ -923,24 +938,50 @@ class ShaderAudioEngine {
 
   /** The aliens won: the schoolyard taunt ("nyah-nyah nyah-nyah nyaaah"),
    * twice, in key and on the groove's eighth grid, capped with a saw
-   * raspberry — while tauntUntil keeps the invasion march at double time. */
-  alienTaunt() {
+   * raspberry. The invasion march goes SILENT while this plays (tauntUntil
+   * gates it in the scheduler) — the gloat owns the stage.
+   *
+   * deep=true is the BOSS version: half-tempo, two octaves down, doubled
+   * saws with a sine sub under every note, and a floor-shaking raspberry —
+   * a taunt that rumbles instead of squeaks. */
+  alienTaunt(deep = false) {
     if (!this.ready()) return;
-    this.tauntUntil = this.ctx!.currentTime + 9;
-    const stepT = 60 / BPM / 2; // eighths
+    this.tauntUntil = this.ctx!.currentTime + (deep ? 10.5 : 9);
+    const stepT = (60 / BPM / 2) * (deep ? 2 : 1); // eighths; quarters when deep
     const seq = [
       { f: 392, s: 0 }, { f: 392, s: 1 }, { f: 329.63, s: 2 },
       { f: 440, s: 3 }, { f: 392, s: 4 }, { f: 329.63, s: 6 },
     ];
+    const oct = deep ? 0.5 : 2;
     for (let r = 0; r < 2; r++) {
       for (const n of seq) {
-        this.note(n.f * 2, {
-          type: 'square', gain: 0.045, decay: n.s === 6 ? 0.5 : 0.16,
-          delay: (r * 9 + n.s) * stepT, wet: 0.25,
-        });
+        const at = (r * 9 + n.s) * stepT;
+        const long = n.s === 6;
+        if (deep) {
+          this.note(n.f * oct, {
+            type: 'sawtooth', gain: 0.06, decay: long ? 0.9 : 0.34,
+            delay: at, wet: 0.3,
+          });
+          this.note(n.f * oct * 1.007, {
+            type: 'sawtooth', gain: 0.035, decay: long ? 0.9 : 0.34, delay: at,
+          });
+          this.note(n.f * oct * 0.25, {
+            type: 'sine', gain: 0.16, decay: long ? 1.0 : 0.4, delay: at,
+          });
+        } else {
+          this.note(n.f * oct, {
+            type: 'square', gain: 0.045, decay: long ? 0.5 : 0.16,
+            delay: at, wet: 0.25,
+          });
+        }
       }
     }
-    this.sweep(600, 90, { type: 'sawtooth', gain: 0.05, dur: 0.7, delay: 19 * stepT, wet: 0.3 });
+    if (deep) {
+      this.subBoom(1.2);
+      this.sweep(220, 30, { type: 'sawtooth', gain: 0.09, dur: 1.3, delay: 19 * stepT, wet: 0.4 });
+    } else {
+      this.sweep(600, 90, { type: 'sawtooth', gain: 0.05, dur: 0.7, delay: 19 * stepT, wet: 0.3 });
+    }
   }
 
   /** A monster escapes before the gate finds it: a falling zip into a
@@ -1207,16 +1248,15 @@ class ShaderAudioEngine {
       // the invasion march: while pixel monsters roam the page, the classic
       // four-note descent (A G F E, in key) stomps underneath whatever the
       // groove is doing — quarter-note patrol steps, doubling to urgent
-      // eighths when one charges the hearts or the troupe is taunt-dancing.
-      // This layer ignores proximity on purpose: an alien APPEARING is what
-      // changes the song.
-      if (this.alienCount > 0 || this.tauntUntil > t) {
-        const urgent = this.alienUrgent || this.tauntUntil > t;
-        const stride = urgent ? 2 : 4;
+      // eighths when one charges the hearts. This layer ignores proximity
+      // on purpose: an alien APPEARING is what changes the song. It goes
+      // SILENT for the taunt dance — the nyah-nyah plays over a bare stage.
+      if (this.alienCount > 0 && this.tauntUntil <= t) {
+        const stride = this.alienUrgent ? 2 : 4;
         if (s % stride === 0) {
           const walk = [110, 98, 87.31, 82.41]; // A2 G2 F2 E2
           const f = walk[Math.floor(s / stride) % 4];
-          const g = Math.min(0.05, 0.018 + this.alienCount * 0.008) * (urgent ? 1.3 : 1);
+          const g = Math.min(0.05, 0.018 + this.alienCount * 0.008) * (this.alienUrgent ? 1.3 : 1);
           const delay = t - ctx.currentTime;
           this.note(f, { type: 'square', gain: g, decay: 0.11, delay });
           this.note(f * 2.02, { type: 'square', gain: g * 0.35, decay: 0.08, delay });

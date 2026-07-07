@@ -507,6 +507,7 @@ interface Monster {
   hitAt: number;          // last dart impact (brief invulnerability window)
   raidAt: number;         // performance.now() when it turns on the hearts
   raiding: boolean;       // beelining for the heart HUD right now
+  boss: boolean;          // the big one: 5 darts, takes ALL hearts on touch
 }
 
 interface HeartDrop {
@@ -846,22 +847,36 @@ export const ShaderGuide: React.FC = () => {
     let hearts = MAX_HEARTS;
     let heartsShown = false; // HUD stays hidden until the first alien lands
     let danceUntil = 0;      // aliens-won taunt party window
+    let danceDeep = false;   // the BOSS won: slow, rumbling choreography
+    let kills = 0;           // downed aliens since the last boss
     const heartDrops: HeartDrop[] = [];
     let nextHeartAt = Infinity; // armed once the first heart is lost
-    const emitHearts = (reason: 'show' | 'steal' | 'gain' | 'defeat' | 'reset') => {
+    const emitHearts = (reason: 'show' | 'steal' | 'gain' | 'defeat' | 'reset' | 'boss') => {
       heartsShown = true;
       window.dispatchEvent(new CustomEvent('mdflow:hearts', {
         detail: { hearts, max: MAX_HEARTS, reason },
       }));
     };
-    // where the raiders are headed: the HUD's real rect when mounted
+    // where the raiders are headed: the HUD's real rect when mounted.
+    // Cached: a per-frame querySelector + getBoundingClientRect per raider
+    // forces style/layout work exactly when the page is busiest (hovering
+    // keeps the CTA train's char animations dirtying style every frame).
+    const anchorCache = { x: 0, y: 0, at: -1 };
     const heartsAnchor = () => {
-      const el = document.querySelector('[data-hearts-anchor]');
-      if (el) {
-        const r = el.getBoundingClientRect();
-        return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      const now = performance.now();
+      if (now - anchorCache.at > 500) {
+        anchorCache.at = now;
+        const el = document.querySelector('[data-hearts-anchor]');
+        if (el) {
+          const r = el.getBoundingClientRect();
+          anchorCache.x = r.left + r.width / 2;
+          anchorCache.y = r.top + r.height / 2;
+        } else {
+          anchorCache.x = window.innerWidth - 80;
+          anchorCache.y = window.innerHeight - 30;
+        }
       }
-      return { x: window.innerWidth - 80, y: window.innerHeight - 30 };
+      return anchorCache;
     };
     const spawnHeart = (x?: number, y?: number) => {
       if (heartDrops.length >= 2) return;
@@ -889,7 +904,7 @@ export const ShaderGuide: React.FC = () => {
     };
 
     const spawnMonster = () => {
-      if (monsters.length >= MONSTER_CAP) return;
+      if (monsters.filter(m => !m.boss).length >= MONSTER_CAP) return;
       const W = window.innerWidth;
       const H = window.innerHeight;
       let x = W / 2;
@@ -912,6 +927,7 @@ export const ShaderGuide: React.FC = () => {
         hp: 2, hitAt: 0,
         raidAt: performance.now() + 9000 + Math.random() * 9000,
         raiding: false,
+        boss: false,
       });
       addShock(x, y, 0.35);
       shaderAudio.monsterSpawn(seed);
@@ -923,21 +939,62 @@ export const ShaderGuide: React.FC = () => {
           -Math.cos(a) * 300, -Math.sin(a) * 300, 0.35, 0, 0, 1, 0.6);
       }
     };
+    // the BOSS: after three downed aliens the big one descends — five darts
+    // to fell it, and a single touch of the hearts takes EVERYTHING
+    const spawnBoss = () => {
+      if (monsters.some(m => m.boss)) return;
+      const W = window.innerWidth;
+      const x = W * (0.2 + Math.random() * 0.6);
+      const seed = Math.random();
+      monsters.push({
+        x, y: -70, vx: 0, vy: 150, seed,
+        size: 52,
+        wander: Math.random() * Math.PI * 2,
+        alive: 0, fade: 1, pop: 0,
+        dieAt: performance.now() + 90000,
+        chirpAt: performance.now() + 2500,
+        fleeing: false,
+        hp: 5, hitAt: 0,
+        raidAt: performance.now() + 9000 + Math.random() * 5000,
+        raiding: false,
+        boss: true,
+      });
+      addShock(x, 60, 1.2);
+      later(() => addShock(x, 120, -0.8), 200);
+      shaderAudio.bossSpawn(seed);
+      emitHearts('boss');
+    };
     const captureMonster = (mn: Monster) => {
       mn.pop = 0.001; // the dissolve animation takes it from here
-      addShock(mn.x, mn.y, 1.1);
+      addShock(mn.x, mn.y, mn.boss ? 1.6 : 1.1);
       energyTarget = 1;
       shaderAudio.monsterCaught(mn.seed);
       // the creature bursts into chord-tone sparks that ring on landing
       const chord = shaderAudio.currentChord();
-      for (let k = 0; k < 12; k++) {
-        const a = (k / 12) * Math.PI * 2 + Math.random() * 0.3;
+      const burstN = mn.boss ? 20 : 12;
+      for (let k = 0; k < burstN; k++) {
+        const a = (k / burstN) * Math.PI * 2 + Math.random() * 0.3;
         const s = 320 + Math.random() * 380;
         spawnSpark(mn.x, mn.y, Math.cos(a) * s, Math.sin(a) * s,
-          undefined, chord[k % chord.length] * 2, 0, 0.5, 1.1);
+          undefined, chord[k % chord.length] * 2, 0, 0.5, mn.boss ? 1.5 : 1.1);
       }
-      // a downed raider sometimes drops what it came for
-      if (hearts < MAX_HEARTS && Math.random() < 0.5) spawnHeart(mn.x, mn.y);
+      if (mn.boss) {
+        // the giant goes down: a sub-boom and it spills the hearts it hoards
+        shaderAudio.subBoom(1.4);
+        if (hearts < MAX_HEARTS) {
+          spawnHeart(mn.x - 40, mn.y);
+          spawnHeart(mn.x + 40, mn.y);
+        }
+      } else {
+        // a downed raider sometimes drops what it came for
+        if (hearts < MAX_HEARTS && Math.random() < 0.5) spawnHeart(mn.x, mn.y);
+        // every third kill wakes the big one
+        kills++;
+        if (kills >= 3) {
+          kills = 0;
+          later(spawnBoss, 1400);
+        }
+      }
       // the easter-egg layer counts the hunt
       window.dispatchEvent(new CustomEvent('mdflow:monster', {
         detail: { x: mn.x, y: mn.y, seed: mn.seed },
@@ -945,18 +1002,20 @@ export const ShaderGuide: React.FC = () => {
     };
 
     // the aliens win: they gather center-stage and taunt-dance to the
-    // groove, then swagger off — and mercy refills the hearts for round 2
-    const alienVictory = () => {
-      danceUntil = performance.now() + 9500;
+    // groove, then swagger off — and mercy refills the hearts for round 2.
+    // A BOSS win turns it into the deep, rumbling version.
+    const alienVictory = (bossWin = false) => {
+      danceUntil = performance.now() + (bossWin ? 11000 : 9500);
+      danceDeep = bossWin;
       while (monsters.filter(m => m.pop === 0 && !m.fleeing).length < 3
-             && monsters.length < MONSTER_CAP) {
+             && monsters.filter(m => !m.boss).length < MONSTER_CAP) {
         spawnMonster();
       }
       for (const m of monsters) {
         m.raiding = false;
         m.dieAt = danceUntil + 8000; // nobody leaves mid-dance
       }
-      shaderAudio.alienTaunt();
+      shaderAudio.alienTaunt(bossWin);
       emitHearts('defeat');
     };
     // even-odd ray cast: is the point inside the closed gate polygon?
@@ -999,6 +1058,11 @@ export const ShaderGuide: React.FC = () => {
         const poly = [...chain.pts, { x, y }];
         for (const mn of monsters) {
           if (mn.pop > 0 || mn.fleeing) continue;
+          // the boss is far too big for a light net — darts only
+          if (mn.boss) {
+            if (inPoly(mn.x, mn.y, poly)) shaderAudio.monsterChirp(mn.seed);
+            continue;
+          }
           if (inPoly(mn.x, mn.y, poly)) {
             captureMonster(mn);
           } else if (Math.hypot(mn.x - cx, mn.y - cy) < 420) {
@@ -1458,8 +1522,9 @@ export const ShaderGuide: React.FC = () => {
     // hidden summon hook: fills the monster roster and (optionally) puts
     // them straight on the warpath — playtesting and e2e checks use this
     const onInvasion = (ev: Event) => {
-      const d = (ev as CustomEvent<{ raidMs?: number }>).detail ?? {};
-      while (monsters.length < MONSTER_CAP) spawnMonster();
+      const d = (ev as CustomEvent<{ raidMs?: number; boss?: boolean }>).detail ?? {};
+      if (d.boss) spawnBoss();
+      else while (monsters.filter(m => !m.boss).length < MONSTER_CAP) spawnMonster();
       for (const mn of monsters) {
         if (mn.pop === 0 && !mn.fleeing) {
           mn.raidAt = performance.now() + (d.raidMs ?? 1500);
@@ -1951,15 +2016,20 @@ export const ShaderGuide: React.FC = () => {
             mn.hitAt = now;
             mn.hp--;
             mn.alive = 1.7; // impact flash — eases back down to its fade
-            mn.vx += p.vx * 0.35; // knockback along the dart's path
-            mn.vy += p.vy * 0.35;
-            mn.raiding = false; // a hit breaks the raid charge
-            mn.raidAt = now + 6000 + Math.random() * 6000;
-            addShock(p.x, p.y, 0.5);
+            // the boss barely flinches and NEVER breaks its charge —
+            // kill it in five or it reaches the hearts
+            const mass = mn.boss ? 0.08 : 0.35;
+            mn.vx += p.vx * mass; // knockback along the dart's path
+            mn.vy += p.vy * mass;
+            if (!mn.boss) {
+              mn.raiding = false; // a hit breaks a small raider's charge
+              mn.raidAt = now + 6000 + Math.random() * 6000;
+            }
+            addShock(p.x, p.y, mn.boss ? 0.7 : 0.5);
             p.active = false;
             volleySparkResolved(p, false);
             if (mn.hp <= 0) captureMonster(mn);
-            else shaderAudio.monsterHit(mn.seed);
+            else shaderAudio.monsterHit(mn.seed, mn.boss);
             break;
           }
           if (!p.active) continue;
@@ -2044,6 +2114,28 @@ export const ShaderGuide: React.FC = () => {
       }
       const dancers = nowMs < danceUntil
         ? monsters.filter(m => m.pop === 0 && !m.fleeing) : [];
+      // the boss fronts the troupe: pull it to the middle slot
+      const bossIdx = dancers.findIndex(m => m.boss);
+      if (bossIdx >= 0) {
+        const [b] = dancers.splice(bossIdx, 1);
+        dancers.splice(Math.floor(dancers.length / 2), 0, b);
+      }
+      // eggo party: hovering the workshop button (tremble is that hover's
+      // smoothed signal) calls a truce — everyone gathers around the eggo
+      // and dances WITH it instead of raiding
+      let eggoParty: { x: number; y: number; r: number } | null = null;
+      if (tremble > 0.3 && danceUntil === 0 && eggEl && monsters.length > 0) {
+        const er = eggEl.getBoundingClientRect();
+        if (er.width > 10 && er.bottom > 0 && er.top < window.innerHeight) {
+          eggoParty = {
+            x: er.left + er.width / 2,
+            y: er.top + er.height / 2,
+            r: Math.max(er.width, er.height) / 2,
+          };
+        }
+      }
+      const partiers = eggoParty
+        ? monsters.filter(m => m.pop === 0 && !m.fleeing) : [];
       for (let i = monsters.length - 1; i >= 0; i--) {
         const mn = monsters[i];
         if (mn.pop > 0) {
@@ -2066,7 +2158,8 @@ export const ShaderGuide: React.FC = () => {
         const W = window.innerWidth;
         const H = window.innerHeight;
         const dancing = dancers.length > 0 && mn.pop === 0 && !mn.fleeing;
-        if (!dancing && !mn.fleeing && !mn.raiding && nowMs > mn.raidAt) {
+        const partying = !dancing && eggoParty !== null && mn.pop === 0 && !mn.fleeing;
+        if (!dancing && !partying && !mn.fleeing && !mn.raiding && nowMs > mn.raidAt) {
           // the turn: it stops playing coy and goes for your hearts
           mn.raiding = true;
           shaderAudio.monsterChirp(mn.seed);
@@ -2074,16 +2167,34 @@ export const ShaderGuide: React.FC = () => {
         }
         if (dancing) {
           // they won: line up center-stage and taunt-bop on the beat —
-          // sway, bounce, and a lazy counter-drift, all spring-followed
+          // sway, bounce, and a lazy counter-drift, all spring-followed.
+          // A boss victory runs HALF-TIME and heavy: bigger drops, wider
+          // sways, the giant stomping in the middle.
           const di = Math.max(0, dancers.indexOf(mn));
           const n = Math.max(1, dancers.length);
-          const beat = (nowMs / 1000) * (BPM / 60) * Math.PI;
-          const tx = W / 2 + (di - (n - 1) / 2) * Math.min(120, W / (n + 2))
-                   + Math.sin(beat + di * 2.1) * 30;
-          const ty = H * 0.4 - Math.abs(Math.sin(beat)) * 36
+          const beat = (nowMs / 1000) * (BPM / 60) * Math.PI * (danceDeep ? 0.5 : 1);
+          const amp = danceDeep ? 1.7 : 1;
+          const tx = W / 2 + (di - (n - 1) / 2) * Math.min(130, W / (n + 2))
+                   + Math.sin(beat + di * 2.1) * 30 * amp;
+          const ty = H * 0.4 - Math.abs(Math.sin(beat)) * 36 * amp
                    + Math.sin(beat * 0.5 + di) * 10;
           mn.vx += (tx - mn.x) * 26 * dt;
           mn.vy += (ty - mn.y) * 26 * dt;
+        } else if (partying && eggoParty) {
+          // truce: ring up around the eggo and bop with it — raids are on
+          // hold as long as the workshop button keeps the party going
+          const di = Math.max(0, partiers.indexOf(mn));
+          const pn = Math.max(1, partiers.length);
+          const beat = (nowMs / 1000) * (BPM / 60) * Math.PI;
+          const ang = (di / pn) * Math.PI * 2 + nowMs * 0.0005;
+          const rad = eggoParty.r + 46 + (mn.boss ? mn.size : 12);
+          const tx = eggoParty.x + Math.cos(ang) * rad;
+          const ty = eggoParty.y + Math.sin(ang) * rad * 0.72
+                   - Math.abs(Math.sin(beat + di)) * 22;
+          mn.vx += (tx - mn.x) * 20 * dt;
+          mn.vy += (ty - mn.y) * 20 * dt;
+          mn.raiding = false;
+          mn.raidAt = Math.max(mn.raidAt, nowMs + 3000); // grace after the song
         } else if (mn.raiding) {
           // committed: it beelines for the hearts — an easy target for a
           // slingshot dart, but expensive to ignore
@@ -2091,31 +2202,35 @@ export const ShaderGuide: React.FC = () => {
           const dxA = anchor.x - mn.x;
           const dyA = anchor.y - mn.y;
           const dA = Math.max(Math.hypot(dxA, dyA), 1);
-          if (dA < 46) {
-            hearts--;
+          if (dA < (mn.boss ? 30 + mn.size : 46)) {
+            // the boss empties the whole rack in one touch
+            hearts = mn.boss ? 0 : hearts - 1;
             emitHearts('steal');
             shaderAudio.heartSteal(mn.seed);
-            addShock(anchor.x, anchor.y, -0.8);
+            addShock(anchor.x, anchor.y, mn.boss ? -1.4 : -0.8);
             mn.raiding = false;
             mn.raidAt = nowMs + 12000 + Math.random() * 10000;
             // victory hop: it bolts off with the loot
-            mn.vx += -(dxA / dA) * 750;
-            mn.vy += -(dyA / dA) * 750 - 150;
+            mn.vx += -(dxA / dA) * (mn.boss ? 420 : 750);
+            mn.vy += -(dyA / dA) * (mn.boss ? 420 : 750) - 150;
             // a replacement heart will drift in eventually
             nextHeartAt = Math.min(nextHeartAt, nowMs + 8000 + Math.random() * 8000);
-            if (hearts <= 0) alienVictory();
+            if (hearts <= 0) alienVictory(mn.boss);
           } else {
-            mn.vx += (dxA / dA) * 900 * dt;
-            mn.vy += (dyA / dA) * 900 * dt;
+            // the giant lumbers; the small ones dart
+            const acc = mn.boss ? 520 : 900;
+            mn.vx += (dxA / dA) * acc * dt;
+            mn.vy += (dyA / dA) * acc * dt;
           }
         } else {
           // wander: the heading drifts and the creature paddles along it
           mn.wander += (Math.random() - 0.5) * dt * 4;
           mn.vx += Math.cos(mn.wander) * 260 * dt;
           mn.vy += Math.sin(mn.wander) * 260 * dt;
-          // shy: it slips away from the cursor, so pointing never catches it
+          // shy: it slips away from the cursor, so pointing never catches
+          // it — but the boss fears nothing
           const dc = Math.hypot(mn.x - smooth.x, mn.y - smooth.y);
-          if (dc < 240) {
+          if (dc < 240 && !mn.boss) {
             const push = (1 - dc / 240) * 950 * dt;
             mn.vx += ((mn.x - smooth.x) / Math.max(dc, 1)) * push;
             mn.vy += ((mn.y - smooth.y) / Math.max(dc, 1)) * push;
@@ -2124,7 +2239,7 @@ export const ShaderGuide: React.FC = () => {
         if (mn.fleeing) {
           // bolts for the nearest side and phases out
           mn.vx += (mn.x < W / 2 ? -1 : 1) * 700 * dt;
-        } else if (!mn.raiding && !dancing) {
+        } else if (!mn.raiding && !dancing && !partying) {
           // soft walls keep it on the page while it lives
           const mrg = 60;
           if (mn.x < mrg) mn.vx += (mrg - mn.x) * 8 * dt;
@@ -2162,14 +2277,20 @@ export const ShaderGuide: React.FC = () => {
           break;
         }
         // idle chirps — each creature speaks its own scale degree;
-        // mid-dance they jeer constantly and shed confetti sparks
+        // mid-dance they jeer constantly and shed confetti sparks, and the
+        // boss's deep dance stomps ground-ripples on its beat
         if (nowMs > mn.chirpAt && mn.alive > 0.5) {
           if (dancing) {
-            mn.chirpAt = nowMs + 600 + Math.random() * 700;
+            mn.chirpAt = nowMs + (danceDeep ? 850 : 600) + Math.random() * 700;
             shaderAudio.monsterChirp(mn.seed);
             spawnSpark(mn.x, mn.y - mn.size,
               (Math.random() - 0.5) * 240, -260 - Math.random() * 220,
               0.7, 0, 0, 1, 0.8);
+            if (danceDeep && mn.boss) addShock(mn.x, mn.y + mn.size, 0.5);
+          } else if (partying) {
+            // jolly: quicker chatter while it dances with the eggo
+            mn.chirpAt = nowMs + 1400 + Math.random() * 1400;
+            shaderAudio.monsterChirp(mn.seed);
           } else {
             mn.chirpAt = nowMs + 4000 + Math.random() * 6000;
             shaderAudio.monsterChirp(mn.seed);
@@ -2179,6 +2300,7 @@ export const ShaderGuide: React.FC = () => {
       // the party's over: the troupe swaggers off and mercy refills you
       if (danceUntil > 0 && nowMs >= danceUntil) {
         danceUntil = 0;
+        danceDeep = false;
         for (const mn of monsters) {
           if (mn.pop === 0 && !mn.fleeing) {
             mn.fleeing = true;
@@ -2190,11 +2312,13 @@ export const ShaderGuide: React.FC = () => {
         emitHearts('reset');
         nextMonsterAt = nowMs + 25000 + Math.random() * 20000;
       }
-      // heart pickups: drift down with a lazy sway until caught or lost
+      // heart pickups: drift down with a lazy sway until caught or lost.
+      // One drop per arming (a steal re-arms) — an endless respawn cycle
+      // would keep the page at full frame rate forever after one raid.
       if (hearts < MAX_HEARTS && heartDrops.length === 0 && nowMs > nextHeartAt
           && danceUntil === 0 && !document.hidden) {
         spawnHeart();
-        nextHeartAt = nowMs + 16000 + Math.random() * 14000;
+        nextHeartAt = Infinity;
       }
       for (let i = heartDrops.length - 1; i >= 0; i--) {
         const hd = heartDrops[i];
@@ -2403,8 +2527,9 @@ export const ShaderGuide: React.FC = () => {
         monData[si * 4 + 3] = mn.seed;
         monPopData[si * 4 + 0] = Math.min(mn.alive, 2); // >1 = dart-hit flash
         monPopData[si * 4 + 1] = mn.pop;
-        monPopData[si * 4 + 2] = mn.seed * 0.9 + 0.05; // hue
-        monPopData[si * 4 + 3] = mn.seed * 40;         // wobble phase
+        // the boss always burns hot red; the small fry keep seeded hues
+        monPopData[si * 4 + 2] = mn.boss ? 0.99 : mn.seed * 0.9 + 0.05;
+        monPopData[si * 4 + 3] = mn.seed * 40;          // wobble phase
         si++;
       }
       // heart pickups ride the same sprite slots, flagged by seed = -1

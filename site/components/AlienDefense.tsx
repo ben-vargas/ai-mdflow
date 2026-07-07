@@ -16,7 +16,7 @@ import React, { useEffect, useRef, useState } from 'react';
 interface HeartsDetail {
     hearts: number;
     max: number;
-    reason: 'show' | 'steal' | 'gain' | 'defeat' | 'reset';
+    reason: 'show' | 'steal' | 'gain' | 'defeat' | 'reset' | 'boss';
 }
 
 export const AlienDefense: React.FC = () => {
@@ -52,6 +52,8 @@ export const AlienDefense: React.FC = () => {
                 say('👾👾👾 the aliens win this round — watch them gloat', 9000);
             } else if (d.reason === 'reset') {
                 say('❤️ hearts restored. round two.', 4000);
+            } else if (d.reason === 'boss') {
+                say('🛸 BOSS INBOUND — five darts, or one touch takes every heart', 8000);
             }
         };
         window.addEventListener('mdflow:hearts', onHearts);
