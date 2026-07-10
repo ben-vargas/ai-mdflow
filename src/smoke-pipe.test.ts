@@ -202,3 +202,54 @@ Received: {{ _stdin }}
     expect(output).toContain("line3");
   });
 });
+
+describe("smoke: never-closing stdin", () => {
+  let testDir: string;
+  let cleanup: () => Promise<void>;
+
+  beforeAll(async () => {
+    const temp = await createTempDir("md-smoke-stdin-hang-");
+    testDir = temp.tempDir;
+    cleanup = temp.cleanup;
+  });
+
+  afterAll(async () => {
+    await cleanup();
+  });
+
+  // Regression: a headless caller (hook, cron, detached agent) can hand the
+  // CLI a non-TTY stdin that never reaches EOF. A flow that never references
+  // {{ _stdin }} must not drain stdin at all, or it blocks forever.
+  test("flow without _stdin completes while stdin is held open", async () => {
+    const agent = await createTestAgent(
+      testDir,
+      "no-stdin-ref.echo.md",
+      `---
+---
+Runs without reading stdin
+`
+    );
+
+    const proc = spawn({
+      cmd: ["bun", "run", CLI_PATH, agent],
+      stdin: "pipe", // held open for the whole test — EOF never arrives
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env } as Record<string, string>,
+    });
+
+    const timeout = new Promise<"timeout">((resolve) =>
+      setTimeout(() => resolve("timeout"), 15000)
+    );
+    const outcome = await Promise.race([proc.exited, timeout]);
+
+    if (outcome === "timeout") {
+      proc.kill();
+      throw new Error("CLI hung draining a never-closing stdin for a flow that does not reference {{ _stdin }}");
+    }
+
+    const stdout = await new Response(proc.stdout).text();
+    expect(outcome).toBe(0);
+    expect(stdout).toContain("Runs without reading stdin");
+  }, 30000);
+});

@@ -228,6 +228,15 @@ export class CliRunner {
     return Buffer.concat(chunks).toString("utf-8").trim();
   }
 
+  // Draining stdin blocks until EOF, and a headless caller (hook, cron job,
+  // detached agent) can hand us a descriptor that never closes. Reading is
+  // therefore deferred until the expanded template actually references
+  // {{ _stdin }}, and memoized so it is drained at most once per process.
+  private stdinReadOnce: Promise<string> | undefined;
+  private readStdinOnce(): Promise<string> {
+    return (this.stdinReadOnce ??= this.readStdin());
+  }
+
   private writeStdout(data: string): void { console.log(data); }
   private writeStderr(data: string): void { console.error(data); }
 
@@ -794,7 +803,6 @@ export class CliRunner {
     setLogPath(logPath);
     logger.info({ virtualFilename, adhoc: true }, "Ad-hoc session started");
 
-    const stdinContent = await this.readStdin();
     const { frontmatter: baseFrontmatter, body: rawBody } = parseFrontmatter(content);
     getParseLogger().debug({ frontmatter: baseFrontmatter, bodyLength: rawBody.length, adhoc: true }, "Virtual frontmatter parsed");
 
@@ -802,7 +810,7 @@ export class CliRunner {
     const parsed = this.parseFlags(passthroughArgs);
 
     const { command, frontmatter, templateVars, finalBody, args, positionalMappings, interactiveMode } =
-      await this.processAgent(virtualFilename, baseFrontmatter, rawBody, stdinContent, parsed);
+      await this.processAgent(virtualFilename, baseFrontmatter, rawBody, () => this.readStdinOnce(), parsed);
 
     // Dry run
     if (parsed.dryRun) {
@@ -970,7 +978,6 @@ export class CliRunner {
     setLogPath(logPath);
     logger.info({ filePath: localFilePath }, "Session started");
 
-    const stdinContent = await this.readStdin();
     const content = await this.env.fs.readText(localFilePath);
     const { frontmatter: baseFrontmatter, body: rawBody } = parseFrontmatter(content);
     getParseLogger().debug({ frontmatter: baseFrontmatter, bodyLength: rawBody.length }, "Frontmatter parsed");
@@ -1012,7 +1019,7 @@ export class CliRunner {
     }
 
     const { command, frontmatter, templateVars, finalBody, args, positionalMappings, interactiveMode } =
-      await this.processAgent(localFilePath, baseFrontmatter, rawBody, stdinContent, parsed);
+      await this.processAgent(localFilePath, baseFrontmatter, rawBody, () => this.readStdinOnce(), parsed);
 
     // Show context dashboard before execution (unless --_quiet)
     if (!parsed.quiet && shouldShowDashboard(rawBody)) {
@@ -1518,7 +1525,6 @@ export class CliRunner {
       setLogPath(logPath);
       logger.info({ filePath: localFilePath, events: true }, "Event-stream session started");
 
-      const stdinContent = await this.readStdin();
       const content = await this.env.fs.readText(localFilePath);
       const { frontmatter: baseFrontmatter, body: rawBody } = parseFrontmatter(content);
 
@@ -1550,7 +1556,7 @@ export class CliRunner {
       }
 
       const { command, frontmatter, templateVars, finalBody, args, positionalMappings } =
-        await this.processAgent(localFilePath, baseFrontmatter, rawBody, stdinContent, parsed);
+        await this.processAgent(localFilePath, baseFrontmatter, rawBody, () => this.readStdinOnce(), parsed);
 
       const flowId = flowIdForPath(resolve(localFilePath), { cwd: this.cwd });
       const effectiveCwd = resolve(
@@ -1943,7 +1949,7 @@ export class CliRunner {
     localFilePath: string,
     baseFrontmatter: Record<string, unknown>,
     rawBody: string,
-    stdinContent: string,
+    readStdin: () => Promise<string>,
     parsed: ReturnType<typeof this.parseFlags>
   ) {
     const { remainingArgs, commandFromCli, interactiveFromCli, cwdFromCli, noHistory, jsonMode } = parsed;
@@ -2070,11 +2076,6 @@ export class CliRunner {
 
     // Template vars - all use _prefix (e.g., _name in frontmatter → {{ _name }} in body)
     let templateVars: Record<string, string> = {};
-
-    // Inject stdin as _stdin template variable
-    if (stdinContent) {
-      templateVars["_stdin"] = stdinContent;
-    }
 
     // Extract _varname fields from frontmatter and match with --_varname CLI flags
     // Variables starting with _ are template variables (except internal keys)
@@ -2210,6 +2211,19 @@ export class CliRunner {
     // Check for missing template vars (based on Phase 1 result)
     // This handles both legacy _inputs and template vars not defined in form inputs
     const requiredVars = extractTemplateVars(phase1Body);
+
+    // Inject stdin as _stdin only when the expanded template references it.
+    // Draining an unreferenced stdin can block forever on a never-closing
+    // descriptor (hooks, cron, detached agents). Non-empty input becomes
+    // {{ _stdin }}; empty input falls through to the normal missing-variable
+    // flow (TTY prompt or TemplateError), same as before.
+    if (requiredVars.includes("_stdin") && !("_stdin" in templateVars)) {
+      const stdinContent = await readStdin();
+      if (stdinContent) {
+        templateVars["_stdin"] = stdinContent;
+      }
+    }
+
     const missingVars = requiredVars.filter((v) => !(v in templateVars));
 
     // Load variable history for this agent (unless --_no-history)
