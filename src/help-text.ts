@@ -11,8 +11,11 @@ Usage: md <file.md> [flags for the command]
        md.COMMAND "prompt" [flags]      # Ad-hoc execution (no file needed)
 
 Commands:
-  md init [--guided] [-y]       Safely scaffold a starter flow roster
-                                (--guided tailors it with an installed agent CLI)
+  md init [--guided] [-y] [--agents] [--print-guide]
+                                Safely scaffold a starter flow roster
+                                (--guided tailors it with an installed agent CLI;
+                                --agents adds AGENTS.md/CLAUDE.md guidance;
+                                --print-guide prints the setup prompt, free)
   md create "<intent>"          Create a project flow (--global works from any directory)
   md doctor [--json]            Inspect project readiness + safe next actions (free, read-only)
   md explain <agent.md>         Show resolved config without executing
@@ -33,7 +36,9 @@ Commands:
   md remove <name>              Remove an installed registry flow
   md list                       List installed registry flows
   md roster --json              Machine-readable roster of project/global/registry flows
-  md roster sync [--check]      Update or check the managed flows/README.md operator card
+  md roster sync [--check] [--agents]
+                                Update or check the managed flows/README.md operator
+                                card (--agents opts into AGENTS.md/CLAUDE.md guidance)
   md setup                      Configure shell (PATH, aliases)
   md logs                       Show agent log directory
   md help                       Show this help
@@ -112,4 +117,5 @@ md-specific flags (consumed, not passed to command):
 
 Without arguments:
   md              Open the Flow Workbench: browse, create, run, and improve flows
+                  (on a project with no flows at all, offers first-run setup)
 `;

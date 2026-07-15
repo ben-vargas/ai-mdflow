@@ -22,6 +22,7 @@ import {
 	resolveEvolutionPolicy,
 } from "./evolution-core";
 import {
+	applyHooksToFrontmatter,
 	listHandledEventsStatic,
 	resolveHooksFile,
 	type CanonicalHookEvent,
@@ -346,7 +347,29 @@ async function inspectFlow(
 					message: `${flow.engine} has no verified lifecycle-hook integration.`,
 				});
 			} else {
-				hooks = { ...hooks, state: "ready", events: handled.events };
+				// "ready" must mean the REAL run would accept this configuration,
+				// so run the same pure translation the runtime uses (environment
+				// preparation disabled — passive surfaces never write). This
+				// catches exclusive-key ownership conflicts (e.g. a claude flow
+				// that also sets `settings:`) and isolation requirements.
+				try {
+					applyHooksToFrontmatter(adapter, flow.engine, effectiveFrontmatter, {
+						hooksFile: hooksResolution.path,
+						events: handled.events,
+						isolated: effectiveFrontmatter._isolated !== false,
+						prepareEnvironment: false,
+					});
+					hooks = { ...hooks, state: "ready", events: handled.events };
+				} catch (error) {
+					hooks = { ...hooks, state: "invalid", events: handled.events };
+					diagnostics.push({
+						code: "HOOKS_INVALID",
+						severity: "error",
+						path: displayPath,
+						message:
+							error instanceof Error ? error.message : String(error),
+					});
+				}
 			}
 		}
 	}
@@ -462,7 +485,14 @@ export async function collectDoctorReport(
 		});
 	}
 	const projectFlows = roster.flows.filter((flow) => flow.source === "project");
-	if (projectFlows.length === 0) {
+	// "Not initialized" requires a CLEAN empty inspection. A project whose
+	// flows all failed to parse is structurally broken, not empty — steering
+	// an agent toward `md init --yes` there would mutate a roster someone
+	// owns.
+	if (
+		projectFlows.length === 0 &&
+		!diagnostics.some((item) => item.code === "FLOW_INVALID")
+	) {
 		diagnostics.push({
 			code: "PROJECT_NOT_INITIALIZED",
 			severity: "warning",
@@ -569,8 +599,16 @@ export async function collectDoctorReport(
 		`${a.path ?? ""}:${a.code}`.localeCompare(`${b.path ?? ""}:${b.code}`),
 	);
 
+	// Fail closed on next actions: while ANY structural error is present, a
+	// diagnostic-driven agent must not be handed LOCAL_WRITE/ENGINE commands —
+	// mutating a structurally broken project compounds the breakage. FREE
+	// inspection actions remain.
+	const hasStructuralErrors = diagnostics.some(
+		(item) => item.severity === "error",
+	);
 	const nextActions = diagnostics.flatMap((diagnostic, index) =>
-		diagnostic.action
+		diagnostic.action &&
+		(!hasStructuralErrors || diagnostic.action.effect === "FREE")
 			? [
 					{
 						id: `diagnostic.${index + 1}`,

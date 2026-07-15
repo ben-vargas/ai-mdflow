@@ -887,11 +887,18 @@ Usage: md <file.md> [flags for the command]
        md.COMMAND "prompt" [flags]      # Ad-hoc execution (no file needed)
 
 Commands:
-  md init [--guided] [-y]       Safely scaffold a starter flow roster
-                                (--guided tailors it with an installed agent CLI)
+  md init [--guided] [-y] [--agents] [--print-guide]
+                                Safely scaffold a starter flow roster
+                                (--guided tailors it with an installed agent CLI;
+                                --agents adds AGENTS.md/CLAUDE.md guidance;
+                                --print-guide prints the setup prompt, free)
   md create "<intent>"          Create a project flow (--global for a personal flow)
+  md doctor [--json]            Inspect project readiness + safe next actions (free)
   md explain <agent.md>         Show resolved config without executing
+  md render <flow.md>           Render prompt + full config as a shareable HTML page (free)
+  md hooks add|list|remove <flow.md> [event…]  Manage the flow's lifecycle hooks file
   md eval <flow.md> [--plan]    Run or cost-preview the flow's eval suite
+  md eval add|list|remove|coverage  Scaffold suites, verdicts, and the coverage ratchet
   md feedback <flow.md> "msg"   Record durable evolution evidence (free)
   md complain <flow.md> "msg"   Alias for md feedback
   md evolve plan|propose <flow> Plan for free or create a private proposal
@@ -900,6 +907,9 @@ Commands:
   md install <url|gh:...@ref>   Install a flow into the registry (--global for user scope)
   md remove <name>              Remove an installed registry flow
   md list                       List installed registry flows
+  md roster --json              Machine-readable roster of project/global/registry flows
+  md roster sync [--check] [--agents]  Update or check the managed operator card
+                                (--agents opts into AGENTS.md/CLAUDE.md guidance)
   md setup                      Configure shell (PATH, aliases)
   md logs                       Show agent log directory
   md help                       Show this help

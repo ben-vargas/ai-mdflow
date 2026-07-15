@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, relative, resolve } from "node:path";
 import yaml from "js-yaml";
+import { assertPlainDirectory } from "./contained-write";
 import { openInEditor } from "./file-selector";
 import { parseRawFrontmatter } from "./parse";
 import { contextualFlowTip } from "./tips";
@@ -453,6 +454,8 @@ function applyLegacyLocation(
 	draft: FlowDraft,
 	directory: string,
 ): "created" | "conflict" {
+	// Never follow a symlinked target directory out of the project.
+	assertPlainDirectory(directory);
 	mkdirSync(directory, { recursive: true });
 	try {
 		writeFileSync(join(directory, draft.filename), draft.markdown, {

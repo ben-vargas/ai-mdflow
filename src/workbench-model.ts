@@ -13,6 +13,7 @@ import { join } from "node:path";
 import yaml from "js-yaml";
 import { getRegisteredAdapters } from "./adapters/index";
 import { mdflowVersion, stampCreatedVersion } from "./compat";
+import { assertPlainDirectory } from "./contained-write";
 import { inferEvalRecipes, renderEvalTemplate } from "./eval-convention";
 import { ensureFlowIdentity } from "./evolution-core";
 import { syncRosterReadme } from "./roster-readme";
@@ -527,6 +528,9 @@ export function applyFlowDraft(
 		};
 	}
 
+	// A symlinked flows/ would redirect every "project-contained" write to
+	// wherever it points; refuse instead of following it.
+	assertPlainDirectory(target.flowsDir);
 	mkdirSync(target.flowsDir, { recursive: true });
 	if (writeExclusive(flowPath, draft.markdown) === "exists") {
 		return {

@@ -321,10 +321,11 @@
       {
         "id": "flow.dry-run",
         "command": "md <flow.md> --_dry-run",
-        "summary": "Resolve imports and print a command plan without launching the engine",
+        "summary": "Resolve imports and print a command plan without launching the engine; context providers may execute locally",
         "effect": "FREE",
         "consent": "none",
-        "network": true
+        "network": true,
+        "executesLocalCode": true
       },
       {
         "id": "flow.run",

@@ -1,5 +1,7 @@
 import {
+	chmodSync,
 	existsSync,
+	lstatSync,
 	readFileSync,
 	readdirSync,
 	renameSync,
@@ -9,7 +11,8 @@ import {
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { resolveEngine } from "./command";
-import { findManagedBlock, upsertManagedBlock } from "./managed-block";
+import { ContainmentError, containedWritePath } from "./contained-write";
+import { upsertManagedBlock } from "./managed-block";
 import { isCompatOnlyFrontmatter } from "./compat";
 import { parseFrontmatter } from "./parse";
 import type { AgentFrontmatter } from "./types";
@@ -261,9 +264,31 @@ export function syncRosterReadme(
 	if (inspection.state === "invalid") return { ...inspection, changed: false };
 	if (inspection.state === "current" || options.check)
 		return { ...inspection, changed: false };
-	const source = existsSync(inspection.path)
-		? readFileSync(inspection.path, "utf8")
-		: null;
+	// Containment: a symlinked flows/ (or README.md symlink) would redirect
+	// this write outside the project; refuse instead of following it.
+	try {
+		containedWritePath(root, "flows", "README.md");
+	} catch (error) {
+		return {
+			...inspection,
+			state: "invalid",
+			error:
+				error instanceof ContainmentError
+					? error.message
+					: `containment check failed: ${error instanceof Error ? error.message : String(error)}`,
+			changed: false,
+		};
+	}
+	let mode: number | null = null;
+	let source: string | null = null;
+	try {
+		const stats = lstatSync(inspection.path);
+		mode = stats.mode & 0o777;
+		source = readFileSync(inspection.path, "utf8");
+	} catch {
+		mode = null;
+		source = null;
+	}
 	const desired = desiredSource(source, inspection.expectedBlock);
 	if (!desired.source)
 		return {
@@ -276,6 +301,7 @@ export function syncRosterReadme(
 	const temp = join(dir, `.README.md.${process.pid}.${Date.now()}.tmp`);
 	try {
 		writeFileSync(temp, desired.source, { flag: "wx" });
+		if (mode !== null) chmodSync(temp, mode);
 		renameSync(temp, inspection.path);
 	} catch (error) {
 		try {

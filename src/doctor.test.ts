@@ -74,6 +74,61 @@ describe("md doctor", () => {
 		).toBe(true);
 	});
 
+	it("rejects hook configurations the real run would reject", async () => {
+		const project = root();
+		mkdirSync(join(project, "flows"));
+		writeFileSync(join(project, ".mdflow.yaml"), "engine: claude\n");
+		// Valid hooks sidecar + a flow that also sets `settings:` — the runtime
+		// fails this ownership conflict, so doctor must not report "ready".
+		writeFileSync(
+			join(project, "flows", "review.md"),
+			'---\ndescription: review\nsettings: \'{"model":"opus"}\'\n---\nBody\n',
+		);
+		writeFileSync(
+			join(project, "flows", "review.hooks.ts"),
+			renderHooksTemplate(["stop"]),
+		);
+		const report = await collectDoctorReport({
+			cwd: project,
+			homeDir: join(project, "home"),
+			which: allInstalled,
+		});
+		const flow = report.flows.find((item) => item.path.endsWith("review.md"));
+		expect(flow?.hooks.state).toBe("invalid");
+		expect(
+			report.diagnostics.some(
+				(item) =>
+					item.code === "HOOKS_INVALID" && item.message.includes("settings"),
+			),
+		).toBe(true);
+	});
+
+	it("suppresses mutating next actions while structural errors are present", async () => {
+		const project = root();
+		mkdirSync(join(project, "flows"));
+		// A flow that cannot parse: structurally broken, NOT uninitialized.
+		writeFileSync(
+			join(project, "flows", "broken.md"),
+			"---\ndescription: [unclosed\n---\nBody\n",
+		);
+		const report = await collectDoctorReport({
+			cwd: project,
+			homeDir: join(project, "home"),
+			which: allInstalled,
+		});
+		expect(
+			report.diagnostics.some((item) => item.code === "FLOW_INVALID"),
+		).toBe(true);
+		expect(
+			report.diagnostics.some(
+				(item) => item.code === "PROJECT_NOT_INITIALIZED",
+			),
+		).toBe(false);
+		expect(
+			report.nextActions.every((item) => item.effect === "FREE"),
+		).toBe(true);
+	});
+
 	it("diagnoses opted-in agent guidance drift and stays quiet before opt-in", async () => {
 		const project = root();
 		const homeDir = join(project, "home");

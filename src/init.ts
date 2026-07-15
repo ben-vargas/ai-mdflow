@@ -18,6 +18,7 @@
 
 import {
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
@@ -50,6 +51,7 @@ import {
 	renderEvalTemplate,
 } from "./eval-convention";
 import { stampCreatedVersion } from "./compat";
+import { assertPlainDirectory } from "./contained-write";
 import type { AgentFrontmatter } from "./types";
 import { ensureFlowIdentity } from "./evolution-core";
 import { resolveProjectRoot } from "./project-root";
@@ -80,7 +82,12 @@ interface CatalogEntry {
 	evalContent?: string;
 }
 
-function parseInitArgs(args: string[]): InitOptions {
+/**
+ * Strict by design: an unknown option or missing value is an ERROR, never a
+ * silent fall-through into a LOCAL WRITE. (`md init --dry-run` or a typo like
+ * `--print-gude` must not scaffold the repository.)
+ */
+export function parseInitArgs(args: string[]): InitOptions | { error: string } {
 	const options: InitOptions = {
 		yes: false,
 		guided: false,
@@ -92,7 +99,10 @@ function parseInitArgs(args: string[]): InitOptions {
 		const arg = args[i];
 		if (!arg) continue;
 		if (arg === "--engine" || arg === "-e") {
-			options.engine = args[++i];
+			const value = args[++i];
+			if (!value || value.startsWith("-"))
+				return { error: "--engine requires a value (e.g. --engine claude)" };
+			options.engine = value;
 		} else if (arg === "--yes" || arg === "-y") {
 			options.yes = true;
 		} else if (arg === "--guided" || arg === "-g") {
@@ -103,8 +113,26 @@ function parseInitArgs(args: string[]): InitOptions {
 			options.printGuide = true;
 		} else if (arg === "--help" || arg === "-h") {
 			options.help = true;
+		} else {
+			return { error: `Unknown init option: ${arg}` };
 		}
 	}
+	if (options.help) return options;
+	if (options.printGuide && (options.yes || options.guided || options.agents))
+		return {
+			error:
+				"--print-guide is a FREE standalone action and cannot be combined with --yes, --guided, or --agents",
+		};
+	if (options.guided && options.yes)
+		return {
+			error:
+				"--guided (interactive ENGINE session) and --yes (deterministic scaffold) are mutually exclusive",
+		};
+	if (options.agents && (options.guided || (options.engine && !options.yes)))
+		return {
+			error:
+				"--agents cannot be combined with guided setup — the guided session asks the primary-workflow question itself",
+		};
 	return options;
 }
 
@@ -284,6 +312,9 @@ export function scaffoldStarterFlows(cwd: string, engine: string): string[] {
 	const flowsDir = join(cwd, "flows");
 	const catalog = loadCatalog();
 
+	// A symlinked flows/ would redirect every scaffold write to wherever it
+	// points (potentially outside the repository); refuse instead.
+	assertPlainDirectory(flowsDir);
 	if (!existsSync(flowsDir)) mkdirSync(flowsDir, { recursive: true });
 
 	for (const entry of catalog) {
@@ -393,7 +424,22 @@ export function scaffoldStarterFlows(cwd: string, engine: string): string[] {
 	}
 
 	const configPath = join(cwd, PROJECT_CONFIG_FILE);
-	if (!existsSync(configPath)) {
+	// lstat (never follow): a dangling config symlink reads as "missing" to
+	// existsSync, and a plain write would create the symlink's TARGET. "wx"
+	// additionally refuses to write through any existing path, racing or not.
+	let configStats: ReturnType<typeof lstatSync> | null = null;
+	try {
+		configStats = lstatSync(configPath);
+	} catch {
+		configStats = null;
+	}
+	if (configStats?.isSymbolicLink()) {
+		lines.push(
+			`  refused ${PROJECT_CONFIG_FILE} (symlink — init never writes through symlinks)`,
+		);
+	} else if (configStats) {
+		lines.push(`  skipped ${PROJECT_CONFIG_FILE} (already exists)`);
+	} else {
 		writeFileSync(
 			configPath,
 			`# mdflow project config — https://mdflow.dev
@@ -404,12 +450,11 @@ engine: ${engine}
 evolve:
   mode: suggest
 `,
+			{ flag: "wx" },
 		);
 		lines.push(
 			`  created ${PROJECT_CONFIG_FILE} (engine: ${engine}; evolve: suggest)`,
 		);
-	} else {
-		lines.push(`  skipped ${PROJECT_CONFIG_FILE} (already exists)`);
 	}
 
 	return lines;
@@ -417,20 +462,29 @@ evolve:
 
 /**
  * Opt the project into flows-first agent guidance (AGENTS.md / CLAUDE.md)
- * and report the writes in the init change-line format.
+ * and report the writes in the init change-line format. `ok` is false when
+ * any explicitly requested guidance write failed — callers must surface that
+ * as a nonzero exit, never as a quiet "skipped".
  */
-export function applyAgentGuidance(cwd: string): string[] {
+export function applyAgentGuidance(cwd: string): {
+	lines: string[];
+	ok: boolean;
+} {
 	const before = new Map(
 		inspectAgentGuidance(cwd).map((entry) => [entry.file, entry.state]),
 	);
-	return syncAgentGuidance(cwd, { optIn: true }).map((entry) => {
-		if (entry.state === "invalid")
-			return `  skipped ${entry.file} (${entry.error})`;
+	let ok = true;
+	const lines = syncAgentGuidance(cwd, { optIn: true }).map((entry) => {
+		if (entry.state === "invalid") {
+			ok = false;
+			return `  failed ${entry.file} (${entry.error})`;
+		}
 		if (!entry.changed)
 			return `  skipped ${entry.file} (agent guidance already current)`;
 		const verb = before.get(entry.file) === "missing" ? "created" : "updated";
 		return `  ${verb} ${entry.file} (flows-first agent guidance)`;
 	});
+	return { lines, ok };
 }
 
 /**
@@ -441,7 +495,15 @@ export function applyAgentGuidance(cwd: string): string[] {
 export function hasFlowRoster(cwd: string): boolean {
 	const flowsDir = join(cwd, "flows");
 	if (!existsSync(flowsDir)) return false;
-	return readdirSync(flowsDir).some((file) => {
+	let entries: string[];
+	try {
+		entries = readdirSync(flowsDir);
+	} catch {
+		// Fail closed: an uninspectable flows/ is a roster we must not inject
+		// catalog files into, not proof of absence.
+		return true;
+	}
+	return entries.some((file) => {
 		if (!file.endsWith(".md") || file.toLowerCase() === "readme.md")
 			return false;
 		const path = join(flowsDir, file);
@@ -450,7 +512,9 @@ export function hasFlowRoster(cwd: string): boolean {
 				inspectRunnableFlowSource(path, readFileSync(path, "utf8")) !== null
 			);
 		} catch {
-			return false;
+			// Fail closed: a flow file we cannot read or parse still marks the
+			// roster as owned by someone; plain init must stay a no-op.
+			return true;
 		}
 	});
 }
@@ -470,20 +534,31 @@ export function buildInitReceipt(
 		];
 	}
 
-	const created = changes.filter((line) =>
-		line.trimStart().startsWith("created "),
-	).length;
-	const preserved = changes.filter((line) =>
-		line.trimStart().startsWith("skipped "),
-	).length;
+	const count = (verb: string) =>
+		changes.filter((line) => line.trimStart().startsWith(`${verb} `)).length;
+	const created = count("created");
+	const updated = count("updated");
+	const preserved = count("skipped");
+	const refused = count("refused");
+	const failed = count("failed");
 	const summary = [
 		`mdflow is ready — ${created} ${created === 1 ? "file" : "files"} created for this project.`,
 	];
+	if (updated > 0)
+		summary.push(`${updated} ${updated === 1 ? "file was" : "files were"} updated.`);
 	if (preserved > 0) {
 		summary.push(
 			`${preserved} existing ${preserved === 1 ? "file was" : "files were"} preserved.`,
 		);
 	}
+	if (refused > 0)
+		summary.push(
+			`${refused} ${refused === 1 ? "write was" : "writes were"} refused — details above.`,
+		);
+	if (failed > 0)
+		summary.push(
+			`${failed} requested ${failed === 1 ? "write" : "writes"} FAILED — details above.`,
+		);
 	summary.push("Next: md");
 	summary.push("Inspect: md doctor --json");
 	summary.push("Agent guide: flows/README.md");
@@ -492,6 +567,13 @@ export function buildInitReceipt(
 }
 
 function printInitReceipt(changes: string[], alreadyInitialized = false): void {
+	// Refused/failed operations are never summarized away: print their exact
+	// change lines before the summary that references them.
+	for (const line of changes) {
+		const trimmed = line.trimStart();
+		if (trimmed.startsWith("refused ") || trimmed.startsWith("failed "))
+			console.error(line.trimEnd());
+	}
 	for (const line of buildInitReceipt(changes, { alreadyInitialized }))
 		console.log(line);
 }
@@ -561,25 +643,30 @@ export type FirstRunChoice =
 	| { type: "print" }
 	| { type: "skip" };
 
-/** Pure choice list for the bare-`md` first-run prompt (tested directly). */
+/**
+ * Pure choice list for the bare-`md` first-run prompt (tested directly).
+ * Every choice carries its exact operation class, and the scaffold choice
+ * discloses the engine it would pin as the project default BEFORE selection.
+ */
 export function buildFirstRunChoices(
 	detected: string[],
+	scaffoldEngine: string,
 ): Array<{ name: string; value: FirstRunChoice }> {
 	return [
 		...detected.map((engine) => ({
-			name: `Guided setup with ${engine} (launches your ${engine} session)`,
+			name: `[ENGINE] Guided setup with ${engine} (launches your ${engine} session)`,
 			value: { type: "guided", engine } as FirstRunChoice,
 		})),
 		{
-			name: "Scaffold starter flows now (no engine invocations)",
+			name: `[LOCAL_WRITE] Scaffold starter flows + .mdflow.yaml (default engine: ${scaffoldEngine}; no engine invocations)`,
 			value: { type: "scaffold" },
 		},
 		{
-			name: "Print the setup prompt to paste into any agent (free)",
+			name: "[FREE] Print the setup prompt to paste into any agent",
 			value: { type: "print" },
 		},
 		{
-			name: "Not now — continue to the Workbench",
+			name: "[FREE] Not now — continue to the Workbench",
 			value: { type: "skip" },
 		},
 	];
@@ -598,11 +685,12 @@ export async function runFirstRunSetup(
 ): Promise<number | null> {
 	const projectRoot = resolveProjectRoot(cwd).projectRoot;
 	const detected = detectInstalledEngines();
+	const scaffoldEngine = detected[0] ?? DEFAULT_ENGINE;
 	console.log("No flows found — mdflow isn't set up in this project yet.");
 	try {
 		const choice = await select<FirstRunChoice>({
 			message: "How should this project get its flow roster?",
-			choices: buildFirstRunChoices(detected),
+			choices: buildFirstRunChoices(detected, scaffoldEngine),
 		});
 
 		if (choice.type === "skip") return null;
@@ -637,17 +725,23 @@ export async function runFirstRunSetup(
 			return exitCode;
 		}
 
-		const scaffoldEngine = detected[0] ?? DEFAULT_ENGINE;
-		console.log(`Scaffolding starter flows (engine: ${scaffoldEngine}):`);
-		const changes = scaffoldStarterFlows(projectRoot, scaffoldEngine);
+		// Every question comes BEFORE the first write, so a Ctrl+C anywhere in
+		// the conversation genuinely means nothing was written.
 		const makePrimary = await confirm({
 			message:
 				"Make flows the primary way agents work in this repo? (adds a managed mdflow section to AGENTS.md and CLAUDE.md)",
 			default: true,
 		});
-		if (makePrimary) changes.push(...applyAgentGuidance(projectRoot));
+		console.log(`Scaffolding starter flows (engine: ${scaffoldEngine}):`);
+		const changes = scaffoldStarterFlows(projectRoot, scaffoldEngine);
+		let guidanceOk = true;
+		if (makePrimary) {
+			const guidance = applyAgentGuidance(projectRoot);
+			changes.push(...guidance.lines);
+			guidanceOk = guidance.ok;
+		}
 		printInitReceipt(changes);
-		return 0;
+		return guidanceOk ? 0 : 1;
 	} catch (err) {
 		// Inquirer throws on Ctrl+C — treat as a clean cancel, not a crash.
 		if (err instanceof Error && err.name === "ExitPromptError") {
@@ -659,7 +753,13 @@ export async function runFirstRunSetup(
 }
 
 export async function runInit(args: string[]): Promise<number> {
-	const options = parseInitArgs(args);
+	const parsed = parseInitArgs(args);
+	if ("error" in parsed) {
+		console.error(parsed.error);
+		console.error("Run `md init --help` for usage. Nothing was written.");
+		return 1;
+	}
+	const options = parsed;
 	if (options.help) {
 		printHelp();
 		return 0;
@@ -721,9 +821,14 @@ export async function runInit(args: string[]): Promise<number> {
 		const changes = rosterExists
 			? []
 			: scaffoldStarterFlows(projectRoot, scaffoldEngine);
-		if (options.agents) changes.push(...applyAgentGuidance(projectRoot));
+		let guidanceOk = true;
+		if (options.agents) {
+			const guidance = applyAgentGuidance(projectRoot);
+			changes.push(...guidance.lines);
+			guidanceOk = guidance.ok;
+		}
 		printInitReceipt(changes, rosterExists && changes.length === 0);
-		return 0;
+		return guidanceOk ? 0 : 1;
 	}
 
 	try {

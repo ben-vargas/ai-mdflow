@@ -757,6 +757,21 @@ export async function runCommand(ctx: RunContext): Promise<RunResult> {
   // it would load the outer flow's project config instead of its own.
   const runEnv: Record<string, string | undefined> = { ...adapterEnv, ...process.env, ...env };
   delete runEnv.MDFLOW_CONFIG_CWD;
+  // Recursion marker: an engine session spawned by mdflow (and anything it
+  // shells out to, including nested `md` calls) can detect that it is
+  // already running inside a consented flow. The flows-first agent guidance
+  // block instructs agents to never hand off to another flow when this is
+  // set — recursive handoff multiplies cost without a new consent boundary.
+  // A nested run is surfaced loudly (but not blocked: piped multi-agent
+  // compositions are legitimate) so silent recursion cannot accumulate cost.
+  if (process.env.MDFLOW_ACTIVE_FLOW) {
+    console.error(
+      "Warning [NESTED_FLOW]: this engine run was started from inside " +
+        "another mdflow-launched session; recursive flow handoff multiplies " +
+        "cost without a new consent boundary.",
+    );
+  }
+  runEnv.MDFLOW_ACTIVE_FLOW = "1";
 
   // Determine stdout/stderr pipe config based on mode
   // When spinner is running, we need to pipe stdout to detect first output

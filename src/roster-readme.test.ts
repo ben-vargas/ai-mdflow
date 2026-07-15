@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
+	existsSync,
 	mkdtempSync,
 	readFileSync,
 	rmSync,
@@ -207,6 +208,22 @@ describe("managed roster README", () => {
 		expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toContain(
 			"mdflow flows",
 		);
+	});
+
+	it("roster sync --agents writes no guidance when the README sync fails", async () => {
+		const root = mkdtempSync(join(tmpdir(), "mdflow-roster-failclosed-"));
+		roots.push(root);
+		// No flows/ at all: the README sync is invalid, so the multi-file sync
+		// must not create guidance pointing agents at a roster that isn't there.
+		const result = await spawnMd(["roster", "sync", "--agents", "--json"], {
+			cwd: root,
+			env: { HOME: join(root, "home") },
+		});
+		expect(result.exitCode).toBe(1);
+		const payload = JSON.parse(result.stdout);
+		expect(payload.ok).toBe(false);
+		expect(existsSync(join(root, "AGENTS.md"))).toBe(false);
+		expect(existsSync(join(root, "CLAUDE.md"))).toBe(false);
 	});
 
 	it("records source proof only, never private receipt state", () => {

@@ -278,8 +278,8 @@ process.exit(await runInit([]));`,
 });
 
 describe("first-run setup", () => {
-	it("leads with guided handoff per detected engine and always offers free exits", () => {
-		const choices = buildFirstRunChoices(["claude", "codex"]);
+	it("labels every choice with its operation class and disclosed engine pin", () => {
+		const choices = buildFirstRunChoices(["claude", "codex"], "claude");
 		expect(choices.map((choice) => choice.value)).toEqual([
 			{ type: "guided", engine: "claude" },
 			{ type: "guided", engine: "codex" },
@@ -287,23 +287,35 @@ describe("first-run setup", () => {
 			{ type: "print" },
 			{ type: "skip" },
 		]);
+		expect(choices[0]?.name).toStartWith("[ENGINE]");
 		expect(choices[0]?.name).toContain("claude session");
+		const scaffold = choices.find((c) => c.value.type === "scaffold");
+		expect(scaffold?.name).toStartWith("[LOCAL_WRITE]");
+		expect(scaffold?.name).toContain("default engine: claude");
+		expect(choices.find((c) => c.value.type === "print")?.name).toStartWith(
+			"[FREE]",
+		);
+		expect(choices.find((c) => c.value.type === "skip")?.name).toStartWith(
+			"[FREE]",
+		);
 	});
 
 	it("offers scaffold, print, and skip even with no engines installed", () => {
-		expect(buildFirstRunChoices([]).map((choice) => choice.value.type)).toEqual(
-			["scaffold", "print", "skip"],
-		);
+		expect(
+			buildFirstRunChoices([], "pi").map((choice) => choice.value.type),
+		).toEqual(["scaffold", "print", "skip"]);
 	});
 
 	it("applyAgentGuidance reports created files then current on repeat", () => {
 		const first = applyAgentGuidance(dir);
-		expect(first).toEqual([
+		expect(first.ok).toBe(true);
+		expect(first.lines).toEqual([
 			"  created AGENTS.md (flows-first agent guidance)",
 			"  created CLAUDE.md (flows-first agent guidance)",
 		]);
 		const second = applyAgentGuidance(dir);
-		expect(second).toEqual([
+		expect(second.ok).toBe(true);
+		expect(second.lines).toEqual([
 			"  skipped AGENTS.md (agent guidance already current)",
 			"  skipped CLAUDE.md (agent guidance already current)",
 		]);
@@ -311,11 +323,74 @@ describe("first-run setup", () => {
 
 	it("applyAgentGuidance appends to an existing CLAUDE.md without touching user text", () => {
 		writeFileSync(join(dir, "CLAUDE.md"), "# House rules\n\nKeep me.\n");
-		const lines = applyAgentGuidance(dir);
-		expect(lines).toContain("  updated CLAUDE.md (flows-first agent guidance)");
+		const result = applyAgentGuidance(dir);
+		expect(result.ok).toBe(true);
+		expect(result.lines).toContain(
+			"  updated CLAUDE.md (flows-first agent guidance)",
+		);
 		const content = readFileSync(join(dir, "CLAUDE.md"), "utf-8");
 		expect(content.startsWith("# House rules\n\nKeep me.\n")).toBe(true);
 		expect(content).toContain("mdflow flows");
+	});
+
+	it("applyAgentGuidance reports failure instead of a quiet skip", () => {
+		const block = [
+			"<!-- mdflow:agents:start contract=1 -->",
+			"<!-- mdflow:agents:end -->",
+			"<!-- mdflow:agents:start contract=1 -->",
+			"<!-- mdflow:agents:end -->",
+		].join("\n");
+		writeFileSync(join(dir, "AGENTS.md"), `${block}\n`);
+		const result = applyAgentGuidance(dir);
+		expect(result.ok).toBe(false);
+		expect(
+			result.lines.some((line) => line.trimStart().startsWith("failed AGENTS.md")),
+		).toBe(true);
+	});
+});
+
+describe("strict init argument parsing", () => {
+	const spawnInit = (...flags: string[]) => {
+		const helper = join(dir, "run-strict-init.ts");
+		writeFileSync(
+			helper,
+			`import { runInit } from ${JSON.stringify(join(import.meta.dir, "init.ts"))};
+process.exit(await runInit(process.argv.slice(2)));`,
+		);
+		return Bun.spawnSync(["bun", "run", helper, ...flags], { cwd: dir });
+	};
+
+	it("rejects unknown options instead of silently scaffolding", () => {
+		const result = spawnInit("--print-gude");
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr.toString()).toContain("Unknown init option");
+		expect(existsSync(join(dir, "flows"))).toBe(false);
+	});
+
+	it("rejects an intended preview flag instead of writing", () => {
+		const result = spawnInit("--dry-run");
+		expect(result.exitCode).toBe(1);
+		expect(existsSync(join(dir, "flows"))).toBe(false);
+		expect(existsSync(join(dir, ".mdflow.yaml"))).toBe(false);
+	});
+
+	it("rejects --engine without a value instead of degrading to a scaffold", () => {
+		const result = spawnInit("--engine");
+		expect(result.exitCode).toBe(1);
+		expect(result.stderr.toString()).toContain("--engine requires a value");
+		expect(existsSync(join(dir, "flows"))).toBe(false);
+	});
+
+	it("rejects contradictory operation-class combinations", () => {
+		for (const combo of [
+			["--guided", "--yes"],
+			["--print-guide", "--yes"],
+			["--guided", "--agents"],
+		]) {
+			const result = spawnInit(...combo);
+			expect(result.exitCode).toBe(1);
+			expect(existsSync(join(dir, "flows"))).toBe(false);
+		}
 	});
 });
 

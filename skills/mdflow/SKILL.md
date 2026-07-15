@@ -38,7 +38,7 @@ Start every maintenance task with `md doctor --json`. Branch on stable diagnosti
 - **FREE** `md render <flow.md> --json` — Build the render model; imports and context providers may resolve.
 - **LOCAL_WRITE** `md render <flow.md> --out <path>` — Resolve a flow and write rendered HTML.
 - **LOCAL_WRITE** `md render <flow.md> --open` — Resolve a flow, write temporary HTML, and launch the local opener.
-- **FREE** `md <flow.md> --_dry-run` — Resolve imports and print a command plan without launching the engine.
+- **FREE** `md <flow.md> --_dry-run` — Resolve imports and print a command plan without launching the engine; context providers may execute locally.
 - **ENGINE** `md <flow.md>` — Execute one real flow invocation.
 - **FREE** `md hooks list <flow.md>` — Inspect hook events statically.
 - **LOCAL_WRITE** `md hooks add <flow.md> <event>` — Create or edit an executable hook sidecar.

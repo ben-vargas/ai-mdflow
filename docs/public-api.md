@@ -191,8 +191,10 @@ Within a single directory, lookup order is:
 
 ## Machine-facing Flow UX protocol (`protocolVersion: 1`)
 
-Three contracts let GUIs and agents drive mdflow without scraping terminal
-output. All three are versioned together under `protocolVersion: 1`; callers
+Four contracts let GUIs and agents drive mdflow without scraping terminal
+output (`md doctor --json`, `md roster --json`, `md explain --json`, and
+`md <flow> --events`). All four are versioned together under
+`protocolVersion: 1`; callers
 should verify it (via `md --version` + `md roster --json`) before relying on
 the shapes below.
 

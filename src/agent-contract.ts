@@ -233,10 +233,14 @@ export const OPERATIONS = [
 		id: "flow.dry-run",
 		command: "md <flow.md> --_dry-run",
 		summary:
-			"Resolve imports and print a command plan without launching the engine",
+			"Resolve imports and print a command plan without launching the engine; context providers may execute locally",
 		effect: "FREE",
 		consent: "none",
 		network: true,
+		// Matches DRY_RUN_MAY_RESOLVE_IMPORTS: context providers (e.g.
+		// git-backed ones) can spawn local commands during resolution even
+		// though the engine, inline commands, and executable fences do not run.
+		executesLocalCode: true,
 	},
 	{
 		id: "flow.run",

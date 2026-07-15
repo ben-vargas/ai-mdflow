@@ -6,7 +6,9 @@
  * (`~/.mdflow/*.md`), and registry flows (`.mdflow/registry/` at project and
  * user scope). Documents — markdown files with no frontmatter and no engine
  * marker — are excluded, mirroring the runtime document-vs-flow decision in
- * cli-runner. Always exits 0; unreadable directories become `warnings`.
+ * cli-runner. The enumeration itself always exits 0 (unreadable directories
+ * become `warnings`); `roster sync` exits 1 when the managed surfaces are
+ * stale or invalid.
  */
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -280,7 +282,10 @@ export async function collectRoster(
 	};
 }
 
-/** Run the roster subcommand. Always exits 0 (warnings carry soft failures). */
+/**
+ * Run the roster subcommand. Enumeration always exits 0 (warnings carry soft
+ * failures); `sync` exits 1 when any managed surface is stale or invalid.
+ */
 export async function runRoster(
 	args: string[],
 	cwd = process.cwd(),
@@ -329,12 +334,22 @@ export async function runRoster(
 		// Agent guidance blocks (AGENTS.md / CLAUDE.md). Default sync only
 		// refreshes files that already opted in via markers; --agents is the
 		// explicit "flows are the primary workflow" opt-in that creates them.
-		const guidance = syncAgentGuidance(projectRoot, { check, optIn: agents });
-		const guidanceOk = guidance.every((entry) =>
-			agents
-				? entry.state === "current"
-				: entry.state !== "stale" && entry.state !== "invalid",
-		);
+		// Fail-closed unit: when the roster README sync itself failed (invalid
+		// markers, missing flows/), guidance is inspected but never written —
+		// a partial sync that points agents at a broken roster is worse than
+		// no sync.
+		const readmeFailed = result.state === "invalid";
+		const guidance = syncAgentGuidance(projectRoot, {
+			check: check || readmeFailed,
+			optIn: agents,
+		});
+		const guidanceOk =
+			!readmeFailed &&
+			guidance.every((entry) =>
+				agents
+					? entry.state === "current"
+					: entry.state !== "stale" && entry.state !== "invalid",
+			);
 
 		const ok = result.state === "current" && guidanceOk;
 		if (json) {
