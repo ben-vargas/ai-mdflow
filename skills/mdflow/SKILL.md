@@ -13,6 +13,56 @@ project works by reading them.
 A flow is one markdown file. Frontmatter is config. The body is the prompt.
 mdflow spawns the right engine CLI and passes everything through.
 
+## First action
+
+Run `md doctor --json` before changing a project. Its stable diagnostic codes
+and effect-labelled next actions are authoritative for the current checkout.
+Do not infer project proof, engine availability, hook support, or evolution
+readiness by scraping prose when doctor reports it directly.
+
+<!-- mdflow:agent-contract:start -->
+<!-- Generated from src/agent-contract.ts; do not edit this block by hand. -->
+
+## Agent operations contract
+
+Start every maintenance task with `md doctor --json`. Branch on stable diagnostic codes and effect-labelled next actions rather than scraping prose.
+
+### Operations
+- **FREE** `md doctor --json` — Inspect engines, flows, proof, hooks, compatibility, and next actions.
+- **LOCAL_WRITE** `md init --yes` — Create a deterministic starter roster.
+- **ENGINE** `md init --guided` — Launch an engine-guided setup session that may write an approved roster.
+- **FREE** `md create <intent> --dry-run` — Preview flow creation without writing.
+- **LOCAL_WRITE** `md create <intent>` — Create a flow and fail-closed draft eval suite.
+- **FREE** `md explain <flow.md> --json` — Resolve one invocation without launching its engine; URL imports and context providers may resolve.
+- **FREE** `md render <flow.md> --json` — Build the render model; imports and context providers may resolve.
+- **LOCAL_WRITE** `md render <flow.md> --out <path>` — Resolve a flow and write rendered HTML.
+- **LOCAL_WRITE** `md render <flow.md> --open` — Resolve a flow, write temporary HTML, and launch the local opener.
+- **FREE** `md <flow.md> --_dry-run` — Resolve imports and print a command plan without launching the engine.
+- **ENGINE** `md <flow.md>` — Execute one real flow invocation.
+- **FREE** `md hooks list <flow.md>` — Inspect hook events statically.
+- **LOCAL_WRITE** `md hooks add <flow.md> <event>` — Create or edit an executable hook sidecar.
+- **FREE** `md eval <flow.md> --plan` — Inspect cases and exact planned invocation count.
+- **ENGINE** `md eval <flow.md> --yes` — Load the consented executable suite and run its cases.
+- **LOCAL_WRITE** `md feedback <flow.md> <message>` — Record private evolution evidence.
+- **FREE** `md evolve plan <flow.md>` — Inspect evolution readiness, cost, capabilities, and writes.
+- **ENGINE** `md evolve propose <flow.md> --yes` — Draft and verify a private off-path proposal.
+- **LOCAL_WRITE** `md evolve apply <run-id>` — Atomically apply a reviewed proposal.
+- **FREE** `md roster --json` — Enumerate discoverable flows.
+- **FREE** `md roster sync --check` — Check whether the managed operator card is current.
+- **LOCAL_WRITE** `md roster sync` — Synchronize the managed operator card.
+
+### Safety invariants
+- `SEPARATE_RUN_CONSENT`: A real flow run, eval run, proposal run, and source mutation require separate consent.
+- `EVALS_ARE_EXECUTABLE`: Eval sidecars are executable local TypeScript; static plans do not import them, but real eval runs do.
+- `HOOKS_ARE_EXECUTABLE`: Hook sidecars are executable local TypeScript and must be reviewed before use.
+- `PROPOSAL_IS_NOT_APPLY`: Evolution creates a private proposal; applying it is a separate explicit source mutation.
+- `ISOLATION_IS_NOT_HOST_SANDBOX`: Engine context isolation is not a filesystem, network, process, environment, or credential sandbox.
+- `DRY_RUN_MAY_RESOLVE_IMPORTS`: Dry-run skips engines, inline commands, and executable fences, but file, URL, and context-provider imports may still resolve.
+- `REGISTRY_SIDECARS_NOT_INSTALLED`: Registry install adds one flow, not trusted eval or hook sidecars.
+- `VERIFIED_REQUIRES_CURRENT_FULL_RECEIPT`: A suite's presence is not verification; Verified requires a current fingerprint-bound full-run receipt.
+- `COMPAT_STAMPS_ARE_RUNTIME_MANAGED`: Compatibility stamps are managed by successful local runs, not by diagnostics.
+<!-- mdflow:agent-contract:end -->
+
 ```markdown
 # flows/review.md
 ---
@@ -53,11 +103,14 @@ Rules:
 2. Every flow gets `description:` frontmatter. Frontmatter is what marks a
    file as a flow instead of a document.
 3. Every production flow gets a colocated `<name>.eval.ts` before it is
-   trusted or evolved. The deterministic starter scaffold creates a generic
-   smoke guardrail; replace it with project-specific proof while tailoring.
-   The creed: if a guardrail isn't covered by an eval, it's a wish.
-4. Keep `flows/README.md` current. It's the index your future self and other
-   agents read first.
+   trusted or evolved. Deterministic `md init --yes` copies the real catalog
+   suite when one ships; `md create` creates a fail-closed draft suite that
+   must be reviewed and have `draft: true` removed before it can run. Suite
+   presence is not verification. The creed: if a guardrail isn't covered by
+   an eval, it's a wish.
+4. Keep the managed block in `flows/README.md` current with `md roster sync`.
+   Preserve all user-authored text outside the markers. Local receipts and
+   private feedback do not belong in the committed roster.
 5. Pin the project's default engine in `.mdflow.yaml` (`engine: pi`,
    `engine: claude`, whatever CLI the user has). Individual flows only pin an
    engine when the job demands a specific one.
@@ -219,7 +272,8 @@ body too: after frontmatter it must contain only `{{ _task }}`.
 
 Move loose agent .md files into `./flows`. `tool:` frontmatter becomes
 `engine:` (old key warns). `--_command`/`--tool` flags become `--engine`.
-`*.gemini.md` becomes `*.agy.md` (Google sunset the gemini CLI; agy is the
-successor and `--yolo` is gone there). Bare `task.md` now runs on the
-resolved engine instead of erroring; frontmatter-less files print as
-documents.
+Do not mass-rename Gemini flows: the `gemini` adapter remains valid for Code
+Assist Standard/Enterprise, while `agy` is the successor for individual
+accounts. Migrate only after `md doctor --json` and the user's environment
+confirm the intended engine. Bare `task.md` now runs on the resolved engine
+instead of erroring; frontmatter-less files print as documents.

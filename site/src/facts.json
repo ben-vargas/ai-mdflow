@@ -44,86 +44,417 @@
   ],
   "commands": [
     {
+      "name": "doctor",
+      "usage": "doctor [--json]",
+      "description": "Inspect project readiness and safe next actions without execution"
+    },
+    {
       "name": "init",
-      "usage": "init [--guided] [-y]",
-      "description": "safely scaffold a roster, then open it with bare md"
+      "usage": "init [--guided] [--engine <e>] [--yes]",
+      "description": "Initialize a project flow roster"
     },
     {
       "name": "create",
-      "usage": "create \"<intent>\"",
-      "description": "create a project flow from plain-language intent"
+      "usage": "create [intent] [--global] [--dry-run]",
+      "description": "Create a flow and a fail-closed draft eval suite"
     },
     {
       "name": "explain",
-      "usage": "explain <flow.md>",
-      "description": "show resolved config without executing (free)"
+      "usage": "explain <flow.md> [--json]",
+      "description": "Resolve one flow without launching its engine"
     },
     {
       "name": "render",
-      "usage": "render <flow.md> [--open|--out <path>|--json]",
-      "description": "render prompt + full config as a shareable HTML page (free)"
+      "usage": "render <flow.md> [--json|--out <path>|--open]",
+      "description": "Inspect, write, or open a rendered flow explanation"
     },
     {
       "name": "hooks",
-      "usage": "hooks add|list|remove <flow.md> [event…]",
-      "description": "manage the flow's lifecycle hooks file (free)"
+      "usage": "hooks add|list|remove <flow.md> [event...]",
+      "description": "Manage executable lifecycle hook sidecars"
     },
     {
       "name": "eval",
-      "usage": "eval <flow.md> [--plan]",
-      "description": "run or cost-preview the executable eval suite"
+      "usage": "eval <flow.md> [--plan] [--yes] [--json]",
+      "description": "Plan or run a flow's behavioral eval suite"
     },
     {
       "name": "feedback",
-      "usage": "feedback <flow.md> \"msg\"",
-      "description": "record durable feedback with a stable ID (free)"
+      "usage": "feedback <flow.md> <message> | list|show|distill|dismiss|reopen|forget",
+      "description": "Manage durable evolution evidence"
     },
     {
       "name": "complain",
-      "usage": "complain <flow.md> \"msg\"",
-      "description": "alias for feedback"
+      "usage": "complain <flow.md> <message>",
+      "description": "Compatibility alias for feedback"
     },
     {
       "name": "evolve",
-      "usage": "evolve plan|propose <flow.md>",
-      "description": "plan or create a capability-checked off-path proposal"
+      "usage": "evolve plan|status|propose|show|apply|reject|retry|rollback|history|prune",
+      "description": "Manage proposal-first flow evolution"
     },
     {
       "name": "install",
-      "usage": "install <url|gh:org/repo/path@ref>",
-      "description": "install a flow from a registry"
+      "usage": "install <url|gh:org/repo/path@ref> [--global]",
+      "description": "Install one flow into the registry"
     },
     {
       "name": "remove",
       "usage": "remove <name>",
-      "description": "remove an installed flow"
+      "description": "Remove an installed registry flow"
     },
     {
       "name": "list",
-      "usage": "list",
-      "description": "list installed registry flows"
+      "usage": "list [--project|--global]",
+      "description": "List installed registry flows"
     },
     {
       "name": "roster",
-      "usage": "roster --json",
-      "description": "machine-readable roster of project/global/registry flows (free)"
+      "usage": "roster --json | roster sync [--check] [--json]",
+      "description": "Inspect flows or synchronize the managed operator card"
     },
     {
       "name": "setup",
       "usage": "setup",
-      "description": "configure shell (PATH, aliases)"
+      "description": "Configure shell integration"
     },
     {
       "name": "logs",
       "usage": "logs",
-      "description": "show the flow log directory"
+      "description": "Show flow log locations"
     },
     {
       "name": "help",
-      "usage": "help",
-      "description": "full built-in help"
+      "usage": "help [command]",
+      "description": "Show CLI or command help"
     }
   ],
+  "contract": {
+    "contractVersion": 1,
+    "commands": [
+      {
+        "name": "doctor",
+        "usage": "doctor [--json]",
+        "summary": "Inspect project readiness and safe next actions without execution",
+        "json": true
+      },
+      {
+        "name": "init",
+        "usage": "init [--guided] [--engine <e>] [--yes]",
+        "summary": "Initialize a project flow roster",
+        "json": false
+      },
+      {
+        "name": "create",
+        "usage": "create [intent] [--global] [--dry-run]",
+        "summary": "Create a flow and a fail-closed draft eval suite",
+        "json": false
+      },
+      {
+        "name": "explain",
+        "usage": "explain <flow.md> [--json]",
+        "summary": "Resolve one flow without launching its engine",
+        "json": true
+      },
+      {
+        "name": "render",
+        "usage": "render <flow.md> [--json|--out <path>|--open]",
+        "summary": "Inspect, write, or open a rendered flow explanation",
+        "json": true
+      },
+      {
+        "name": "hooks",
+        "usage": "hooks add|list|remove <flow.md> [event...]",
+        "summary": "Manage executable lifecycle hook sidecars",
+        "json": false
+      },
+      {
+        "name": "eval",
+        "usage": "eval <flow.md> [--plan] [--yes] [--json]",
+        "summary": "Plan or run a flow's behavioral eval suite",
+        "json": true
+      },
+      {
+        "name": "feedback",
+        "usage": "feedback <flow.md> <message> | list|show|distill|dismiss|reopen|forget",
+        "summary": "Manage durable evolution evidence",
+        "json": true
+      },
+      {
+        "name": "complain",
+        "usage": "complain <flow.md> <message>",
+        "summary": "Compatibility alias for feedback",
+        "json": true
+      },
+      {
+        "name": "evolve",
+        "usage": "evolve plan|status|propose|show|apply|reject|retry|rollback|history|prune",
+        "summary": "Manage proposal-first flow evolution",
+        "json": true
+      },
+      {
+        "name": "install",
+        "usage": "install <url|gh:org/repo/path@ref> [--global]",
+        "summary": "Install one flow into the registry",
+        "json": false
+      },
+      {
+        "name": "remove",
+        "usage": "remove <name>",
+        "summary": "Remove an installed registry flow",
+        "json": false
+      },
+      {
+        "name": "list",
+        "usage": "list [--project|--global]",
+        "summary": "List installed registry flows",
+        "json": false
+      },
+      {
+        "name": "roster",
+        "usage": "roster --json | roster sync [--check] [--json]",
+        "summary": "Inspect flows or synchronize the managed operator card",
+        "json": true
+      },
+      {
+        "name": "setup",
+        "usage": "setup",
+        "summary": "Configure shell integration",
+        "json": false
+      },
+      {
+        "name": "logs",
+        "usage": "logs",
+        "summary": "Show flow log locations",
+        "json": false
+      },
+      {
+        "name": "help",
+        "usage": "help [command]",
+        "summary": "Show CLI or command help",
+        "json": false
+      }
+    ],
+    "operations": [
+      {
+        "id": "project.inspect",
+        "command": "md doctor --json",
+        "summary": "Inspect engines, flows, proof, hooks, compatibility, and next actions",
+        "effect": "FREE",
+        "consent": "none"
+      },
+      {
+        "id": "project.init",
+        "command": "md init --yes",
+        "summary": "Create a deterministic starter roster",
+        "effect": "LOCAL_WRITE",
+        "consent": "explicit-local-effect",
+        "sourceMayChange": true
+      },
+      {
+        "id": "project.init-guided",
+        "command": "md init --guided",
+        "summary": "Launch an engine-guided setup session that may write an approved roster",
+        "effect": "ENGINE",
+        "consent": "interactive-only",
+        "sourceMayChange": true
+      },
+      {
+        "id": "flow.create-preview",
+        "command": "md create <intent> --dry-run",
+        "summary": "Preview flow creation without writing",
+        "effect": "FREE",
+        "consent": "none"
+      },
+      {
+        "id": "flow.create",
+        "command": "md create <intent>",
+        "summary": "Create a flow and fail-closed draft eval suite",
+        "effect": "LOCAL_WRITE",
+        "consent": "explicit-local-effect",
+        "sourceMayChange": true
+      },
+      {
+        "id": "flow.explain",
+        "command": "md explain <flow.md> --json",
+        "summary": "Resolve one invocation without launching its engine; URL imports and context providers may resolve",
+        "effect": "FREE",
+        "consent": "none",
+        "network": true,
+        "executesLocalCode": true
+      },
+      {
+        "id": "render.inspect",
+        "command": "md render <flow.md> --json",
+        "summary": "Build the render model; imports and context providers may resolve",
+        "effect": "FREE",
+        "consent": "none",
+        "network": true,
+        "executesLocalCode": true
+      },
+      {
+        "id": "render.write",
+        "command": "md render <flow.md> --out <path>",
+        "summary": "Resolve a flow and write rendered HTML",
+        "effect": "LOCAL_WRITE",
+        "consent": "explicit-local-effect",
+        "network": true,
+        "executesLocalCode": true
+      },
+      {
+        "id": "render.open",
+        "command": "md render <flow.md> --open",
+        "summary": "Resolve a flow, write temporary HTML, and launch the local opener",
+        "effect": "LOCAL_WRITE",
+        "consent": "explicit-local-effect",
+        "network": true,
+        "executesLocalCode": true,
+        "localProcess": true
+      },
+      {
+        "id": "flow.dry-run",
+        "command": "md <flow.md> --_dry-run",
+        "summary": "Resolve imports and print a command plan without launching the engine",
+        "effect": "FREE",
+        "consent": "none",
+        "network": true
+      },
+      {
+        "id": "flow.run",
+        "command": "md <flow.md>",
+        "summary": "Execute one real flow invocation",
+        "effect": "ENGINE",
+        "consent": "caller-invoked"
+      },
+      {
+        "id": "hooks.list",
+        "command": "md hooks list <flow.md>",
+        "summary": "Inspect hook events statically",
+        "effect": "FREE",
+        "consent": "none",
+        "executesLocalCode": false
+      },
+      {
+        "id": "hooks.write",
+        "command": "md hooks add <flow.md> <event>",
+        "summary": "Create or edit an executable hook sidecar",
+        "effect": "LOCAL_WRITE",
+        "consent": "explicit-local-effect",
+        "sourceMayChange": true
+      },
+      {
+        "id": "eval.plan",
+        "command": "md eval <flow.md> --plan",
+        "summary": "Inspect cases and exact planned invocation count",
+        "effect": "FREE",
+        "consent": "none",
+        "executesLocalCode": false
+      },
+      {
+        "id": "eval.run",
+        "command": "md eval <flow.md> --yes",
+        "summary": "Load the consented executable suite and run its cases",
+        "effect": "ENGINE",
+        "consent": "interactive-or-yes",
+        "executesLocalCode": true
+      },
+      {
+        "id": "feedback.record",
+        "command": "md feedback <flow.md> <message>",
+        "summary": "Record private evolution evidence",
+        "effect": "LOCAL_WRITE",
+        "consent": "explicit-local-effect"
+      },
+      {
+        "id": "evolve.plan",
+        "command": "md evolve plan <flow.md>",
+        "summary": "Inspect evolution readiness, cost, capabilities, and writes",
+        "effect": "FREE",
+        "consent": "none"
+      },
+      {
+        "id": "evolve.propose",
+        "command": "md evolve propose <flow.md> --yes",
+        "summary": "Draft and verify a private off-path proposal",
+        "effect": "ENGINE",
+        "consent": "interactive-or-yes",
+        "executesLocalCode": true
+      },
+      {
+        "id": "evolve.apply",
+        "command": "md evolve apply <run-id>",
+        "summary": "Atomically apply a reviewed proposal",
+        "effect": "LOCAL_WRITE",
+        "consent": "explicit-local-effect",
+        "sourceMayChange": true
+      },
+      {
+        "id": "roster.inspect",
+        "command": "md roster --json",
+        "summary": "Enumerate discoverable flows",
+        "effect": "FREE",
+        "consent": "none"
+      },
+      {
+        "id": "roster.check",
+        "command": "md roster sync --check",
+        "summary": "Check whether the managed operator card is current",
+        "effect": "FREE",
+        "consent": "none"
+      },
+      {
+        "id": "roster.sync",
+        "command": "md roster sync",
+        "summary": "Synchronize the managed operator card",
+        "effect": "LOCAL_WRITE",
+        "consent": "explicit-local-effect",
+        "sourceMayChange": true
+      }
+    ],
+    "safetyRules": [
+      {
+        "code": "SEPARATE_RUN_CONSENT",
+        "text": "A real flow run, eval run, proposal run, and source mutation require separate consent."
+      },
+      {
+        "code": "EVALS_ARE_EXECUTABLE",
+        "text": "Eval sidecars are executable local TypeScript; static plans do not import them, but real eval runs do."
+      },
+      {
+        "code": "HOOKS_ARE_EXECUTABLE",
+        "text": "Hook sidecars are executable local TypeScript and must be reviewed before use."
+      },
+      {
+        "code": "PROPOSAL_IS_NOT_APPLY",
+        "text": "Evolution creates a private proposal; applying it is a separate explicit source mutation."
+      },
+      {
+        "code": "ISOLATION_IS_NOT_HOST_SANDBOX",
+        "text": "Engine context isolation is not a filesystem, network, process, environment, or credential sandbox."
+      },
+      {
+        "code": "DRY_RUN_MAY_RESOLVE_IMPORTS",
+        "text": "Dry-run skips engines, inline commands, and executable fences, but file, URL, and context-provider imports may still resolve."
+      },
+      {
+        "code": "REGISTRY_SIDECARS_NOT_INSTALLED",
+        "text": "Registry install adds one flow, not trusted eval or hook sidecars."
+      },
+      {
+        "code": "VERIFIED_REQUIRES_CURRENT_FULL_RECEIPT",
+        "text": "A suite's presence is not verification; Verified requires a current fingerprint-bound full-run receipt."
+      },
+      {
+        "code": "COMPAT_STAMPS_ARE_RUNTIME_MANAGED",
+        "text": "Compatibility stamps are managed by successful local runs, not by diagnostics."
+      }
+    ]
+  },
+  "agentPrompts": {
+    "setup": "Set up and tailor this repository's mdflow roster safely:\n\n1. Run `command -v md || npm i -g mdflow`.\n2. Run `md doctor --json` and branch on its stable diagnostic codes and effect-labelled next actions.\n3. Preview deterministic setup, then run `npx mdflow init --yes`; do not launch the guided ENGINE setup unless I separately approve it.\n4. Run `md doctor --json` again. Preserve user-authored text in flows/README.md and keep only its managed block current with `md roster sync`.\n5. Tailor flows and their evals to this repository. Suite presence is not verification: init may copy real catalog suites, while md create emits fail-closed drafts.\n6. For a waiting interactive specialist, put identity in `_system-prompt`, stable rules in `_append-system-prompt`, declare `_task: \"\"`, and make the body exactly `{{ _task }}`; reject any `User task:` wrapper or empty/placeholder positional prompt.\n7. Use `md explain <flow.md> --json` and `md eval <flow.md> --plan` before asking separately for a real flow run or eval run.\n8. Treat .eval.ts and .hooks.ts as executable local code. Engine isolation is not a host sandbox. Registry install adds one flow, not trusted sidecars.",
+    "evals": "Improve the proof for every project flow without spending an engine invocation yet:\n\n1. Start with `md doctor --json`; use its eval diagnostic codes instead of inferring proof from sibling-file presence.\n2. Review each executable .eval.ts sidecar. Replace fail-closed draft cases with 1–3 behavioral cases that check invariants, not exact prose.\n3. Run `md eval <flow.md> --plan` and report the exact planned invocation count including repetitions. Static planning must not import suite code.\n4. Do not run an eval until I separately approve that ENGINE operation; approval to run the flow is not eval approval.\n5. Link reproduced failures to durable feedback with evidence: [\"fb_...\"]. Only a current fingerprint-bound full all-pass receipt is Verified.",
+    "migrate": "Migrate legacy mdflow files conservatively:\n\n1. Run `md doctor --json` first. Move appropriate loose agents into ./flows and use `md roster sync` so user-authored README text is preserved.\n2. Change tool:/_tool: to engine: and --_command/--tool to --engine.\n3. Do not mass-rename Gemini flows: gemini remains valid for Code Assist Standard/Enterprise; use agy only when the user's environment requires it.\n4. For each waiting interactive specialist, put identity in `_system-prompt`, stable rules in `_append-system-prompt`, declare `_task: \"\"`, and make the body exactly `{{ _task }}`; remove `User task:` wrappers and require no positional prompt.\n5. Inspect each result with `md explain <flow.md> --json` and free eval plans. Never infer consent for a real flow run, eval run, proposal, or source apply from another operation."
+  },
   "mdFlags": [
     {
       "flag": "--engine",

@@ -20,6 +20,7 @@ Supported subcommands:
 | `md` | Open the interactive Flow Workbench, including the zero-flow state. Browse/filter with a Markdown and lifecycle preview; run, dry-run, edit, create, record feedback, or enter the proposal-first evolution path. Every action shows its shell equivalent and `FREE`, `ENGINE`, or `LOCAL WRITE` effect before execution. Apply and rollback require a second `Enter`/`c` confirmation on a dedicated local-write screen. |
 | `md init [--guided] [--engine <e>] [--yes]` | Safely scaffold a starter flow roster with zero engine invocations. Plain init is a no-op when `flows/` already has a roster. `--guided` launches an installed agent CLI with the bundled setup guide for a repo-tailored session; an explicit `--engine` preserves that guided behavior unless `--yes` is also present. |
 | `md create "<intent>"` | Create a stable-identity project flow at `flows/<slug>.md` from plain-language intent. Pass `--global` to create a personal, user-scoped flow at `~/.mdflow/<slug>.md` that is available from any project. Uses create-only writes and never overwrites an existing flow. With no intent in a TTY, asks one question. |
+| `md doctor [--json]` | FREE, static, read-only project diagnosis: installed engines, source capabilities, static hook/eval state, compatibility, stable diagnostic codes, and effect-labelled next actions. It executes no engine, suite, hook, inline command, fence, URL, or context provider and writes no files. |
 | `md explain <agent.md> [--json]` | Print resolved config and prompt without execution (free — no engine call). `--json` emits the Flow UX Protocol v1 explanation object (see "Machine-facing Flow UX protocol"). |
 | `md eval <flow.md> [--plan] [--yes] [--filter <text>] [--json]` | Preview or run the flow's executable colocated eval suite (`<flow>.eval.ts`). Cost includes repetitions and is printed before consent. |
 | `md feedback <flow.md> "<message>"` | Record durable, private evidence with a stable ID (free). `list`, `show`, `distill`, `dismiss`, `reopen`, and explicit permanent `forget <id> --yes` manage its lifecycle/privacy. |
@@ -32,6 +33,7 @@ Supported subcommands:
 | `md remove <name>` | Remove an installed registry flow. |
 | `md list [--project\|--global]` | List installed registry flows. |
 | `md roster --json` | Machine-readable enumeration of project (`<projectRoot>/flows/`), global (`~/.mdflow/`), and registry (`.mdflow/registry/`) flows as a single Flow UX Protocol v1 JSON object. Documents (no frontmatter, no engine marker) are excluded. Always exits 0; soft failures land in `warnings`. |
+| `md roster sync [--check] [--json]` | Synchronize only mdflow's marked operator-card block in `flows/README.md`, preserving all text outside the markers. Sync is `LOCAL WRITE`; `--check` is `FREE`, never writes, and exits 1 when stale or invalid. |
 | `md --version` | Print the bare mdflow version string (capability handshake for machine callers). |
 | `md setup` | Configure shell integration. |
 | `md logs` | Show log directory and per-agent logs. |
@@ -44,6 +46,22 @@ top-level `const`). This lets `--plan` derive names, evidence links,
 repetitions, quorum, and cost without importing executable suite code. After
 consent, runtime shape must match the announced static plan before any flow
 invocation starts.
+
+## Operation effects and consent
+
+Machine-facing actions use three stable effect labels:
+
+- `FREE`: static/read-only inspection or planning; no engine invocation. Some
+  dry-runs may still resolve file, URL, or context-provider imports, so use
+  `md doctor --json` when the requirement is strictly no execution or fetch.
+- `LOCAL_WRITE`: changes local source or private state without an engine turn.
+- `ENGINE`: launches one or more provider-backed agent invocations.
+
+Consent is not transferable: approval for a flow run does not approve an eval
+run; eval approval does not approve proposal generation; proposal generation
+does not approve apply. `.eval.ts` and `.hooks.ts` sidecars are executable local
+code. Engine isolation strips supported ambient agent context but is not a host
+filesystem, network, process, environment, or credential sandbox.
 
 ## mdflow-reserved flags
 
@@ -177,6 +195,20 @@ Three contracts let GUIs and agents drive mdflow without scraping terminal
 output. All three are versioned together under `protocolVersion: 1`; callers
 should verify it (via `md --version` + `md roster --json`) before relying on
 the shapes below.
+
+### `md doctor --json`
+
+One-shot project bootstrap query. Prints one `mdflow.doctor` object with its own
+`protocolVersion: 1` and the current `contractVersion`. Important fields are
+`project`, registered/installed `engines`, per-flow static capabilities, hook
+and eval state, `diagnostics[]` with stable `code` values, and `nextActions[]`
+with `effect` and `requiresConsent`.
+
+Doctor is stricter than dry-run: it never expands imports or executes/fetches
+anything and never updates compatibility, ledgers, telemetry, or roster files.
+Exit 1 is reserved for structural or run-blocking errors such as invalid config,
+invalid flows/hooks, or a required missing engine. Lifecycle states such as no
+flows, missing/draft/stale evals, or a stale roster README are warnings.
 
 ### `md roster --json`
 

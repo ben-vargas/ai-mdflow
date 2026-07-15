@@ -14,6 +14,7 @@ Commands:
   md init [--guided] [-y]       Safely scaffold a starter flow roster
                                 (--guided tailors it with an installed agent CLI)
   md create "<intent>"          Create a project flow (--global works from any directory)
+  md doctor [--json]            Inspect project readiness + safe next actions (free, read-only)
   md explain <agent.md>         Show resolved config without executing
   md render <flow.md>           Render prompt + full config as a shareable HTML page (free)
   md hooks add|list|remove <flow.md> [event…]  Manage the flow's lifecycle hooks file
@@ -32,6 +33,7 @@ Commands:
   md remove <name>              Remove an installed registry flow
   md list                       List installed registry flows
   md roster --json              Machine-readable roster of project/global/registry flows
+  md roster sync [--check]      Update or check the managed flows/README.md operator card
   md setup                      Configure shell (PATH, aliases)
   md logs                       Show agent log directory
   md help                       Show this help

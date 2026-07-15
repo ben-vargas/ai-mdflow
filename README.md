@@ -19,6 +19,25 @@ zero engine invocations; repeat runs leave an existing roster untouched. Then
 bare `md` opens the Flow Workbench. Want a repo-tailored setup conversation?
 Run `md init --guided` to launch an installed agent CLI with the setup guide.
 
+## For coding agents
+
+Use the CLI as the source of truth instead of reconstructing project state from
+long prose:
+
+```bash
+command -v md || npm install -g mdflow
+md doctor --json                 # FREE, static, read-only project diagnosis
+npx mdflow init --yes            # LOCAL WRITE, deterministic starter roster
+md doctor --json
+md explain flows/<name>.md --json
+md eval flows/<name>.md --plan   # FREE; a real eval needs separate approval
+```
+
+`flows/README.md` contains a managed operator card; update only that marked
+block with `md roster sync`. Eval and hook sidecars are executable local code.
+Registry install adds one flow, not trusted sidecars. Engine context isolation
+is not a host filesystem, network, process, environment, or credential sandbox.
+
 ---
 
 ## The agent control plane in your repo
@@ -389,6 +408,7 @@ Hello {{ _name }}! Deploying to {{ _env }} with {{ _count }} items.
 ```
 
 **Input types:**
+
 - `text` - Free text input (default if no type specified)
 - `select` - Choose from a list of options
 - `number` - Numeric input
@@ -404,7 +424,7 @@ Hello {{ _name }}! Deploying to {{ _env }} with {{ _count }} items.
 ### System Keys (handled by md)
 
 | Field | Type | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | `_varname` | string | Template variable with default value (use `{{ _varname }}` in body) |
 | `_inputs` | object/array | Interactive form inputs (see above) |
 | `_env` | object | Set process environment variables |
@@ -418,7 +438,7 @@ Hello {{ _name }}! Deploying to {{ _env }} with {{ _count }} items.
 ### Auto-Injected Template Variables
 
 | Variable | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | `{{ _stdin }}` | Content piped to mdflow |
 | `{{ _1 }}`, `{{ _2 }}`... | Positional CLI arguments |
 | `{{ _args }}` | All positional args as numbered list (1. arg1, 2. arg2, ...) |
@@ -437,6 +457,7 @@ p: true                               # → -p (single char = short flag)
 ```
 
 **Value conversion:**
+
 - `key: "value"` → `--key value`
 - `key: true` → `--key`
 - `key: false` → (omitted)
@@ -734,6 +755,7 @@ Review all TypeScript files in src:
 ```
 
 Glob imports:
+
 - Respect `.gitignore` automatically
 - Include common exclusions (`node_modules`, `.git`, etc.)
 - Are limited to ~100,000 tokens by default
@@ -771,6 +793,7 @@ Extract specific TypeScript/JavaScript symbols (interfaces, types, functions, cl
 ```
 
 Supported symbols:
+
 - `interface Name { ... }`
 - `type Name = ...`
 - `function Name(...) { ... }`
@@ -839,6 +862,7 @@ my-agents/
 ```
 
 Environment variables are available:
+
 - In command inlines: `` !`echo $API_KEY` ``
 - In the spawned command's environment
 
@@ -939,7 +963,7 @@ Without arguments:
 ### Environment Variables
 
 | Variable | Description |
-|----------|-------------|
+| ---------- | ------------- |
 | `MDFLOW_FORCE_CONTEXT` | Set to `1` to disable the 100k token limit for glob imports |
 | `MDFLOW_IMPORT_URL_ALLOWLIST` | Comma/newline-separated allowlist rules for URL imports |
 | `MDFLOW_IMPORT_URL_BLOCKLIST` | Comma/newline-separated blocklist rules for URL imports |
@@ -1060,6 +1084,7 @@ md explain review.claude.md
 ```
 
 Shows:
+
 - Resolved command and source (filename, flag, etc.)
 - Final flags after config merging (built-in → global → project → frontmatter)
 - Expanded prompt preview with token count
